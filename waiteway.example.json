@@ -1,0 +1,34 @@
+{
+  "listen": ":8080",
+  "admin": {
+    "username": "admin",
+    "password": "change-me"
+  },
+  "api_keys": [
+    "local-dev-key"
+  ],
+  "log_limit": 100,
+  "routes": [
+    {
+      "name": "wailey",
+      "path_prefix": "/api/chat",
+      "target": "http://localhost:3001",
+      "require_api_key": true,
+      "strip_prefix": false
+    },
+    {
+      "name": "waiconv",
+      "path_prefix": "/api/rooms",
+      "target": "http://localhost:3002",
+      "require_api_key": true,
+      "strip_prefix": false
+    },
+    {
+      "name": "waivatar",
+      "path_prefix": "/api/avatar",
+      "target": "http://localhost:3003",
+      "require_api_key": false,
+      "strip_prefix": false
+    }
+  ]
+}
