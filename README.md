@@ -2,10 +2,6 @@
 
 Gateways made simple.
 
-- https://waiteway.waisuite.com/waipage
-- https://waiteway.waisuite.com/wailey
-- https://waiteway.waisuite.com/waiconv
-
 ## What it does
 
 - reverse proxy by path prefix
