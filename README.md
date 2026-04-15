@@ -2,7 +2,9 @@
 
 Gateways made simple.
 
-Routes requests, checks API keys, logs traffic, and gives you an admin portal.
+https://waiteway.waisuite.com/waipage
+https://waiteway.waisuite.com/wailey
+https://waiteway.waisuite.com/waiconv
 
 ## What it does
 
