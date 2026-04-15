@@ -14,4 +14,5 @@ COPY --from=builder /app/waiteway .
 
 EXPOSE 8080 9090
 
-CMD ["./waiteway", "/data/waiteway.db"]
+ENTRYPOINT ["./waiteway"]
+CMD ["/data/waiteway.db"]
