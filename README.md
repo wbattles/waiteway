@@ -1,6 +1,6 @@
 # Waiteway
 
-Simple API gateway for Waisuite apps.
+Gateways made simple.
 
 Routes requests, checks API keys, logs traffic, and gives you an admin portal.
 
@@ -50,6 +50,14 @@ To only expose the gateway:
 docker run -p 8080:8080 -v ./data:/data waiteway
 ```
 
+## Run with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+Edit `docker-compose.yml` to set your admin credentials before first run.
+
 ## Run with Kubernetes
 
 ### Add the Helm repo
@@ -98,7 +106,7 @@ helm install waiteway waiteway/waiteway \
 
 ## Environment variables
 
-Waiteway reads these on every startup. They override whatever is in the database.
+Waiteway reads these on **first run only**. Once the database has settings, env vars are ignored. Admin portal changes stick after that. To re-seed from env vars, delete the database file.
 
 | variable | description |
 |---|---|
