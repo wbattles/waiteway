@@ -52,6 +52,7 @@ type Gateway struct {
 	loginTmpl  *template.Template
 	sessionsMu sync.Mutex
 	sessions   map[string]struct{}
+	startedAt  time.Time
 }
 
 type compiledRoute struct {
@@ -95,6 +96,7 @@ type adminPageData struct {
 	LogStats        logStats
 	RouteStats      []routeStat
 	Now             time.Time
+	Uptime          string
 	Message         string
 	Error           string
 }
@@ -183,6 +185,7 @@ func newGateway(configPath string, config Config) (*Gateway, error) {
 	g := &Gateway{
 		configPath: configPath,
 		logs:       &requestLogStore{limit: config.LogLimit},
+		startedAt:  time.Now(),
 		tmpl:       tmpl,
 		loginTmpl:  loginTmpl,
 		sessions:   make(map[string]struct{}),
@@ -586,6 +589,7 @@ func (g *Gateway) adminPageData(message, errText string) adminPageData {
 		LogStats:        stats,
 		RouteStats:      routeStats,
 		Now:             time.Now(),
+		Uptime:          formatUptime(time.Since(g.startedAt)),
 		Message:         message,
 		Error:           errText,
 	}
@@ -857,11 +861,20 @@ func normalizeConfig(config Config) (Config, error) {
 }
 
 func settingsConfigFromForm(r *http.Request, current Config) (Config, error) {
+	listen := strings.TrimSpace(r.FormValue("listen"))
+	if listen == "" {
+		listen = current.Listen
+	}
+	username := strings.TrimSpace(r.FormValue("admin_username"))
+	if username == "" {
+		username = current.Admin.Username
+	}
+
 	config := Config{
-		Listen: strings.TrimSpace(r.FormValue("listen")),
+		Listen: listen,
 		Admin: AdminConfig{
-			Username: strings.TrimSpace(r.FormValue("admin_username")),
-			Password: r.FormValue("admin_password"),
+			Username: username,
+			Password: current.Admin.Password,
 		},
 		APIKeys:  current.APIKeys,
 		LogLimit: current.LogLimit,
@@ -939,6 +952,24 @@ func formatDurationMS(d time.Duration) string {
 	return fmt.Sprintf("%.3fms", ms)
 }
 
+func formatUptime(d time.Duration) string {
+	d = d.Round(time.Second)
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm %ds", hours, minutes, seconds)
+	}
+	if minutes > 0 {
+		return fmt.Sprintf("%dm %ds", minutes, seconds)
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
+
 func normalizePathPrefix(value string) string {
 	if value == "" {
 		return ""
@@ -976,6 +1007,9 @@ const adminTemplate = `<!doctype html>
     .users-layout { display: grid; grid-template-columns: 300px 1fr; gap: 24px; }
     .settings-left { display: flex; flex-direction: column; gap: 24px; width: 300px; }
     .settings-right { display: flex; flex-direction: column; gap: 24px; }
+    .config-table td:nth-child(1) { width: 30%; font-size: 0.875rem; }
+    .config-table td:nth-child(2) { width: 55%; font-size: 0.875rem; }
+    .config-table td:nth-child(3) { width: 15%; text-align: right; }
     .create-user-panel { padding: 20px; border: 1px solid #000; height: fit-content; }
     .create-user-panel h3 { margin-bottom: 16px; }
     .create-user-panel form { display: flex; flex-direction: column; gap: 12px; }
@@ -1021,12 +1055,6 @@ const adminTemplate = `<!doctype html>
     .request-scroll::-webkit-scrollbar { display: none; }
     .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .muted { opacity: 0.7; }
-    .info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-    .info-block p + p { margin-top: 6px; }
-    .settings-table th:nth-child(1), .settings-table td:nth-child(1) { width: 32%; padding-right: 12px; }
-    .settings-table th:nth-child(2), .settings-table td:nth-child(2) { width: 28%; padding-right: 12px; }
-    .settings-table th:nth-child(3), .settings-table td:nth-child(3) { width: 20%; padding-right: 12px; }
-    .settings-table th:nth-child(4), .settings-table td:nth-child(4) { width: 20%; }
     .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center; z-index: 10; }
     .modal.hidden { display: none; }
     .modal-box { background: #fff; padding: 24px; width: 420px; max-width: 90vw; border: 1px solid #000; display: flex; flex-direction: column; gap: 12px; }
@@ -1157,113 +1185,54 @@ const adminTemplate = `<!doctype html>
 
       <section id="settings-tab" class="tab-panel">
         <div class="users-layout">
-          <div class="settings-left">
-            <div class="create-user-panel">
-              <h3>admin account</h3>
-              <form method="post" action="/admin">
-                <input type="hidden" name="action" value="save_settings">
-                <input type="hidden" name="listen" value="{{ .Listen }}">
-                <input type="text" name="admin_username" value="{{ .AdminUsername }}" placeholder="admin username">
-                <button type="submit">save username</button>
-              </form>
-              <form method="post" action="/admin">
-                <input type="hidden" name="action" value="change_password">
-                <input type="password" name="current_password" placeholder="current password" required>
-                <input type="password" name="new_password" placeholder="new password" required>
-                <button type="submit">save password</button>
-              </form>
-            </div>
-
-            <div class="create-user-panel">
-              <h3>gateway</h3>
-              <p class="muted">changing listen takes effect after restart</p>
-              <form method="post" action="/admin">
-                <input type="hidden" name="action" value="save_settings">
-                <input type="text" id="listen" name="listen" value="{{ .Listen }}" placeholder="listen">
-                <button type="submit">save gateway</button>
-              </form>
-            </div>
-
-            <div class="create-user-panel">
-              <h3>logging</h3>
-              <form method="post" action="/admin">
-                <input type="hidden" name="action" value="save_logging">
-                <input type="number" name="log_limit" value="{{ .LogLimit }}" placeholder="log limit">
-                <button type="submit">save logging</button>
-              </form>
-              <form method="post" action="/admin">
-                <input type="hidden" name="action" value="clear_logs">
-                <button type="submit">clear logs</button>
-              </form>
-            </div>
+          <div class="create-user-panel">
+            <h3>admin account</h3>
+            <form method="post" action="/admin">
+              <input type="hidden" name="action" value="save_settings">
+              <input type="hidden" name="listen" value="{{ .Listen }}">
+              <input type="text" name="admin_username" value="{{ .AdminUsername }}" placeholder="admin username">
+              <button type="submit">save username</button>
+            </form>
+            <form method="post" action="/admin">
+              <input type="hidden" name="action" value="change_password">
+              <input type="password" name="current_password" placeholder="current password" required>
+              <input type="password" name="new_password" placeholder="new password" required>
+              <button type="submit">save password</button>
+            </form>
           </div>
 
-          <div class="settings-right">
-            <div class="user-list-panel">
-              <h3>overview</h3>
-              <div class="panel-body">
-                <div class="info-grid">
-                  <div class="info-block">
-                    <p><strong>listen</strong></p>
-                    <p>{{ .Listen }}</p>
-                  </div>
-                  <div class="info-block">
-                    <p><strong>admin username</strong></p>
-                    <p>{{ .AdminUsername }}</p>
-                  </div>
-                  <div class="info-block">
-                    <p><strong>routes</strong></p>
-                    <p>{{ len .Routes }}</p>
-                  </div>
-                  <div class="info-block">
-                    <p><strong>log limit</strong></p>
-                    <p>{{ .LogLimit }}</p>
-                  </div>
-                  <div class="info-block">
-                    <p><strong>protected routes</strong></p>
-                    <p>{{ .ProtectedRoutes }}</p>
-                  </div>
-                  <div class="info-block">
-                    <p><strong>open routes</strong></p>
-                    <p>{{ .OpenRoutes }}</p>
-                  </div>
-                  <div class="info-block">
-                    <p><strong>route api keys</strong></p>
-                    <p>{{ .RouteKeyCount }}</p>
-                  </div>
-                  <div class="info-block">
-                    <p><strong>time</strong></p>
-                    <p>{{ .Now.Format "2006-01-02 15:04:05 MST" }}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="user-list-panel">
-              <h3>route access</h3>
-              <div class="panel-body">
-                <table class="settings-table">
-                  <thead>
-                    <tr>
-                      <th>route</th>
-                      <th>path</th>
-                      <th>auth</th>
-                      <th>keys</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {{ range .Routes }}
-                    <tr>
-                      <td><span class="scroll-cell">{{ .Name }}</span></td>
-                      <td><span class="scroll-cell">{{ .PathPrefix }}</span></td>
-                      <td>{{ if .RequireAPIKey }}api key{{ else }}open{{ end }}</td>
-                      <td>{{ len .APIKeys }}</td>
-                    </tr>
-                    {{ else }}
-                    <tr><td colspan="4" class="muted">no routes yet</td></tr>
-                    {{ end }}
-                  </tbody>
-                </table>
+          <div class="user-list-panel" style="min-height: 0; height: auto;">
+            <h3>gateway config</h3>
+            <div class="panel-body">
+              <table class="config-table">
+                <tbody>
+                  <tr>
+                    <td><strong>listen</strong></td>
+                    <td>{{ .Listen }}</td>
+                    <td><button type="button" onclick="openSettingsModal('listen', '{{ .Listen }}')">edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><strong>log limit</strong></td>
+                    <td>{{ .LogLimit }}</td>
+                    <td><button type="button" onclick="openSettingsModal('log_limit', '{{ .LogLimit }}')">edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><strong>routes</strong></td>
+                    <td>{{ len .Routes }} ({{ .ProtectedRoutes }} protected, {{ .OpenRoutes }} open)</td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><strong>uptime</strong></td>
+                    <td>{{ .Uptime }}</td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+              <div style="margin-top: 16px">
+                <form method="post" action="/admin" style="display:inline">
+                  <input type="hidden" name="action" value="clear_logs">
+                  <button type="submit">clear logs</button>
+                </form>
               </div>
             </div>
           </div>
@@ -1308,7 +1277,46 @@ const adminTemplate = `<!doctype html>
     </div>
   </div>
 
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2 id="settings-modal-title">edit setting</h2>
+      <form method="post" action="/admin">
+        <input type="hidden" id="settings-action" name="action" value="save_settings">
+        <input type="hidden" id="settings-listen" name="listen" value="{{ .Listen }}">
+        <input type="hidden" id="settings-admin-username" name="admin_username" value="{{ .AdminUsername }}">
+        <input type="hidden" id="settings-log-limit" name="log_limit" value="{{ .LogLimit }}">
+        <input id="settings-value" type="text" name="" value="">
+        <div class="modal-actions">
+          <button type="submit">save</button>
+          <button type="button" onclick="closeSettingsModal()">cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
+    var settingsFieldMap = {
+      'listen': { title: 'edit listen', action: 'save_settings', hidden: 'settings-listen' },
+      'admin_username': { title: 'edit admin username', action: 'save_settings', hidden: 'settings-admin-username' },
+      'log_limit': { title: 'edit log limit', action: 'save_logging', hidden: 'settings-log-limit' }
+    }
+
+    function openSettingsModal(field, currentValue) {
+      var info = settingsFieldMap[field]
+      document.getElementById('settings-modal-title').textContent = info.title
+      document.getElementById('settings-action').value = info.action
+      var input = document.getElementById('settings-value')
+      input.name = field
+      input.value = currentValue
+      if (field === 'log_limit') input.type = 'number'
+      else input.type = 'text'
+      document.getElementById('settings-modal').classList.remove('hidden')
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('settings-modal').classList.add('hidden')
+    }
+
     function showTab(name, button) {
       document.querySelectorAll('.tab-btn').forEach((button) => button.classList.remove('active'))
       document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'))
