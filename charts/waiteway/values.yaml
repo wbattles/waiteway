@@ -1,0 +1,38 @@
+image:
+  repository: waiteway
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+admin:
+  username: admin
+  password: ""
+  # use an existing secret instead of the values above
+  existingSecret: ""
+  # keys inside the existing secret
+  usernameKey: username
+  passwordKey: password
+
+service:
+  gateway:
+    type: ClusterIP
+    port: 8080
+  admin:
+    type: ClusterIP
+    port: 9090
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

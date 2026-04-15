@@ -1,3 +1,6 @@
+waiteway
 waiteway.db
 waiteway.db-shm
 waiteway.db-wal
+chart/
+.git/
