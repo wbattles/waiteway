@@ -90,9 +90,7 @@ func (s *Store) SetSetting(key, value string) error {
 
 func (s *Store) LoadConfig() (Config, error) {
 	config := Config{
-		Listen:      s.GetSetting("listen", ":8080"),
-		AdminListen: s.GetSetting("admin_listen", ":9090"),
-		LogLimit:    100,
+		LogLimit: 100,
 		Admin: AdminConfig{
 			Username: s.GetSetting("admin_username", "admin"),
 			Password: s.GetSetting("admin_password", "change-me"),
@@ -112,7 +110,7 @@ func (s *Store) LoadConfig() (Config, error) {
 	return config, nil
 }
 
-func (s *Store) SaveSettings(listen, adminListen, username, password string, logLimit int) error {
+func (s *Store) SaveSettings(username, password string, logLimit int) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -120,8 +118,6 @@ func (s *Store) SaveSettings(listen, adminListen, username, password string, log
 	defer tx.Rollback()
 
 	for _, kv := range [][2]string{
-		{"listen", listen},
-		{"admin_listen", adminListen},
 		{"admin_username", username},
 		{"admin_password", password},
 		{"log_limit", fmt.Sprintf("%d", logLimit)},

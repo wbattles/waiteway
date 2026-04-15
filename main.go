@@ -20,11 +20,9 @@ import (
 )
 
 type Config struct {
-	Listen      string
-	AdminListen string
-	Admin       AdminConfig
-	LogLimit    int
-	Routes      []Route
+	Admin    AdminConfig
+	LogLimit int
+	Routes   []Route
 }
 
 type AdminConfig struct {
@@ -75,8 +73,6 @@ type statusRecorder struct {
 }
 
 type adminPageData struct {
-	Listen          string
-	AdminListen     string
 	AdminUsername   string
 	AdminPassword   string
 	LogLimit        int
@@ -140,22 +136,32 @@ func main() {
 		log.Fatal(err)
 	}
 
+	listen := envOrDefault("WAITEWAY_LISTEN", ":8080")
+	adminListen := envOrDefault("WAITEWAY_ADMIN_LISTEN", ":9090")
+
 	gateway, err := newGateway(store, config)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	go func() {
-		log.Printf("waiteway admin listening on %s", config.AdminListen)
-		if err := http.ListenAndServe(config.AdminListen, gateway.adminHandler()); err != nil {
+		log.Printf("waiteway admin listening on %s", adminListen)
+		if err := http.ListenAndServe(adminListen, gateway.adminHandler()); err != nil {
 			log.Fatal(err)
 		}
 	}()
 
-	log.Printf("waiteway gateway listening on %s", config.Listen)
-	if err := http.ListenAndServe(config.Listen, gateway.gatewayHandler()); err != nil {
+	log.Printf("waiteway gateway listening on %s", listen)
+	if err := http.ListenAndServe(listen, gateway.gatewayHandler()); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func seedFromEnv(store *Store) {
@@ -165,20 +171,12 @@ func seedFromEnv(store *Store) {
 
 	username := os.Getenv("WAITEWAY_ADMIN_USERNAME")
 	password := os.Getenv("WAITEWAY_ADMIN_PASSWORD")
-	listen := os.Getenv("WAITEWAY_LISTEN")
-	adminListen := os.Getenv("WAITEWAY_ADMIN_LISTEN")
 
 	if username != "" {
 		store.SetSetting("admin_username", username)
 	}
 	if password != "" {
 		store.SetSetting("admin_password", password)
-	}
-	if listen != "" {
-		store.SetSetting("listen", listen)
-	}
-	if adminListen != "" {
-		store.SetSetting("admin_listen", adminListen)
 	}
 }
 
@@ -543,7 +541,7 @@ func (g *Gateway) saveConfig(config Config) error {
 		return err
 	}
 
-	if err := g.store.SaveSettings(config.Listen, config.AdminListen, config.Admin.Username, config.Admin.Password, config.LogLimit); err != nil {
+	if err := g.store.SaveSettings(config.Admin.Username, config.Admin.Password, config.LogLimit); err != nil {
 		return errors.New("could not save config")
 	}
 
@@ -581,8 +579,6 @@ func (g *Gateway) adminPageData(message, errText string) adminPageData {
 	}
 
 	data := adminPageData{
-		Listen:          config.Listen,
-		AdminListen:     config.AdminListen,
 		AdminUsername:   config.Admin.Username,
 		AdminPassword:   config.Admin.Password,
 		LogLimit:        config.LogLimit,
@@ -607,7 +603,6 @@ func (g *Gateway) renderAdminError(w http.ResponseWriter, message string) {
 
 func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, message, errText string) {
 	data := g.adminPageData(message, errText)
-	data.Listen = config.Listen
 	data.AdminUsername = config.Admin.Username
 	data.AdminPassword = config.Admin.Password
 	data.LogLimit = config.LogLimit
@@ -810,12 +805,6 @@ func joinURLPath(basePath, extraPath string) string {
 }
 
 func normalizeConfig(config Config) (Config, error) {
-	if config.Listen == "" {
-		config.Listen = ":8080"
-	}
-	if config.AdminListen == "" {
-		config.AdminListen = ":9090"
-	}
 	if config.LogLimit <= 0 {
 		config.LogLimit = 100
 	}
@@ -826,22 +815,12 @@ func normalizeConfig(config Config) (Config, error) {
 }
 
 func settingsConfigFromForm(r *http.Request, current Config) (Config, error) {
-	listen := strings.TrimSpace(r.FormValue("listen"))
-	if listen == "" {
-		listen = current.Listen
-	}
-	adminListen := strings.TrimSpace(r.FormValue("admin_listen"))
-	if adminListen == "" {
-		adminListen = current.AdminListen
-	}
 	username := strings.TrimSpace(r.FormValue("admin_username"))
 	if username == "" {
 		username = current.Admin.Username
 	}
 
 	config := Config{
-		Listen:      listen,
-		AdminListen: adminListen,
 		Admin: AdminConfig{
 			Username: username,
 			Password: current.Admin.Password,
@@ -1158,7 +1137,6 @@ const adminTemplate = `<!doctype html>
             <h3>admin account</h3>
             <form method="post" action="/">
               <input type="hidden" name="action" value="save_settings">
-              <input type="hidden" name="listen" value="{{ .Listen }}">
               <input type="text" name="admin_username" value="{{ .AdminUsername }}" placeholder="admin username">
               <button type="submit">save username</button>
             </form>
@@ -1175,16 +1153,6 @@ const adminTemplate = `<!doctype html>
             <div class="panel-body">
               <table class="config-table">
                 <tbody>
-                  <tr>
-                    <td><strong>gateway port</strong></td>
-                    <td>{{ .Listen }}</td>
-                    <td><button type="button" onclick="openSettingsModal('listen', '{{ .Listen }}')">edit</button></td>
-                  </tr>
-                  <tr>
-                    <td><strong>admin port</strong></td>
-                    <td>{{ .AdminListen }}</td>
-                    <td><button type="button" onclick="openSettingsModal('admin_listen', '{{ .AdminListen }}')">edit</button></td>
-                  </tr>
                   <tr>
                     <td><strong>log limit</strong></td>
                     <td>{{ .LogLimit }}</td>
@@ -1255,10 +1223,7 @@ const adminTemplate = `<!doctype html>
     <div class="modal-box">
       <h2 id="settings-modal-title">edit setting</h2>
       <form method="post" action="/">
-        <input type="hidden" id="settings-action" name="action" value="save_settings">
-        <input type="hidden" id="settings-listen" name="listen" value="{{ .Listen }}">
-        <input type="hidden" id="settings-admin-username" name="admin_username" value="{{ .AdminUsername }}">
-        <input type="hidden" id="settings-log-limit" name="log_limit" value="{{ .LogLimit }}">
+        <input type="hidden" id="settings-action" name="action" value="save_logging">
         <input id="settings-value" type="text" name="" value="">
         <div class="modal-actions">
           <button type="submit">save</button>
@@ -1270,9 +1235,6 @@ const adminTemplate = `<!doctype html>
 
   <script>
     var settingsFieldMap = {
-      'listen': { title: 'edit gateway port', action: 'save_settings' },
-      'admin_listen': { title: 'edit admin port', action: 'save_settings' },
-      'admin_username': { title: 'edit admin username', action: 'save_settings' },
       'log_limit': { title: 'edit log limit', action: 'save_logging' }
     }
 
