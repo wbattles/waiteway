@@ -2,84 +2,54 @@
 
 Simple API gateway for Waisuite apps.
 
-It routes requests, checks API keys, and gives you a small admin portal.
+Routes requests, checks API keys, logs traffic, and gives you an admin portal.
 
 ## What it does
 
 - reverse proxy by path
-- API key checks
-- basic admin portal
-- recent request log
+- per-route API keys
+- admin portal with login
+- request logging (persisted in SQLite)
 - health endpoint
-
-## Why
-
-One clean entry point for Waisuite services.
-
-Keep client apps simple.
-Keep secrets off the client.
 
 ## Run
 
 ```bash
-cp waiteway.example.json waiteway.json
 go run .
 ```
 
-Or pass a config path:
+On first run, Waiteway creates `waiteway.db` with default settings and an example route.
+
+Or pass a database path:
 
 ```bash
-go run . ./waiteway.example.json
+go run . ./my-gateway.db
 ```
 
-## Config
+## Default admin login
 
-```json
-{
-  "listen": ":8080",
-  "admin": {
-    "username": "admin",
-    "password": "change-me"
-  },
-  "api_keys": ["local-dev-key"],
-  "log_limit": 100,
-  "routes": [
-    {
-      "name": "wailey",
-      "path_prefix": "/api/chat",
-      "target": "http://localhost:3001",
-      "require_api_key": true,
-      "strip_prefix": false
-    }
-  ]
-}
-```
+- username: `admin`
+- password: `change-me`
+
+Change these in the settings tab after first login.
 
 ## Endpoints
 
-- `/health` - status check
-- `/admin` - admin portal
-- route paths from your config
+- `/health` — status check
+- `/admin/login` — admin login
+- `/admin` — admin portal
+- everything else — proxied by route config
 
 ## Admin portal
 
-The admin portal uses HTTP basic auth when `admin.username` and `admin.password` are set.
+Three tabs:
 
-It shows:
+- **gateway** — manage routes (add, edit, delete)
+- **logging** — view request logs and stats
+- **settings** — change password, listen address, log limit
 
-- server info
-- routes
-- form-based settings editor
-- recent requests
+## Storage
 
-## Notes
+All config, routes, logs, and sessions are stored in a single SQLite database.
 
-This is a small first version.
-
-Good next steps:
-
-- rate limits
-- add route delete buttons
-- config reload without restart for listen changes
-- upstream health checks
-- TLS behind nginx or Caddy
+Logs persist across restarts. Sessions persist across restarts.
