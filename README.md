@@ -69,6 +69,7 @@ It shows:
 
 - server info
 - routes
+- form-based settings editor
 - recent requests
 
 ## Notes
@@ -78,7 +79,7 @@ This is a small first version.
 Good next steps:
 
 - rate limits
-- route editing in admin
-- config reload
+- add route delete buttons
+- config reload without restart for listen changes
 - upstream health checks
 - TLS behind nginx or Caddy
