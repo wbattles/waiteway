@@ -20,10 +20,11 @@ import (
 )
 
 type Config struct {
-	Listen   string
-	Admin    AdminConfig
-	LogLimit int
-	Routes   []Route
+	Listen      string
+	AdminListen string
+	Admin       AdminConfig
+	LogLimit    int
+	Routes      []Route
 }
 
 type AdminConfig struct {
@@ -75,6 +76,7 @@ type statusRecorder struct {
 
 type adminPageData struct {
 	Listen          string
+	AdminListen     string
 	AdminUsername   string
 	AdminPassword   string
 	LogLimit        int
@@ -131,6 +133,8 @@ func main() {
 		})
 	}
 
+	seedFromEnv(store)
+
 	config, err := store.LoadConfig()
 	if err != nil {
 		log.Fatal(err)
@@ -141,9 +145,40 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("waiteway listening on %s", config.Listen)
-	if err := http.ListenAndServe(config.Listen, gateway.routesHandler()); err != nil {
+	go func() {
+		log.Printf("waiteway admin listening on %s", config.AdminListen)
+		if err := http.ListenAndServe(config.AdminListen, gateway.adminHandler()); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	log.Printf("waiteway gateway listening on %s", config.Listen)
+	if err := http.ListenAndServe(config.Listen, gateway.gatewayHandler()); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func seedFromEnv(store *Store) {
+	if store.HasSettings() {
+		return
+	}
+
+	username := os.Getenv("WAITEWAY_ADMIN_USERNAME")
+	password := os.Getenv("WAITEWAY_ADMIN_PASSWORD")
+	listen := os.Getenv("WAITEWAY_LISTEN")
+	adminListen := os.Getenv("WAITEWAY_ADMIN_LISTEN")
+
+	if username != "" {
+		store.SetSetting("admin_username", username)
+	}
+	if password != "" {
+		store.SetSetting("admin_password", password)
+	}
+	if listen != "" {
+		store.SetSetting("listen", listen)
+	}
+	if adminListen != "" {
+		store.SetSetting("admin_listen", adminListen)
 	}
 }
 
@@ -258,22 +293,29 @@ func newSingleHostProxy(target *url.URL, route Route) *httputil.ReverseProxy {
 	return proxy
 }
 
-func (g *Gateway) routesHandler() http.Handler {
+func (g *Gateway) gatewayHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("/admin/login", g.handleAdminLogin)
-	mux.HandleFunc("/admin/logout", g.handleAdminLogout)
-	mux.HandleFunc("/admin", g.handleAdmin)
-	mux.HandleFunc("/admin/", g.handleAdmin)
 	mux.HandleFunc("/", g.handleProxy)
+	return mux
+}
+
+func (g *Gateway) adminHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("/login", g.handleAdminLogin)
+	mux.HandleFunc("/logout", g.handleAdminLogout)
+	mux.HandleFunc("/", g.handleAdmin)
 	return mux
 }
 
 func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if !g.authorizeAdmin(r) {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 
@@ -327,7 +369,7 @@ func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +390,7 @@ func (g *Gateway) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 	})
 
-	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
@@ -379,7 +421,7 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleAdminClearLogs(w http.ResponseWriter, r *http.Request) {
 	g.store.ClearLogs()
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminSaveSettings(w http.ResponseWriter, r *http.Request) {
@@ -394,7 +436,7 @@ func (g *Gateway) handleAdminSaveSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Request) {
@@ -417,7 +459,7 @@ func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminSaveLogging(w http.ResponseWriter, r *http.Request) {
@@ -432,7 +474,7 @@ func (g *Gateway) handleAdminSaveLogging(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
@@ -449,7 +491,7 @@ func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g.reloadConfig()
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminUpdateRoute(w http.ResponseWriter, r *http.Request) {
@@ -472,7 +514,7 @@ func (g *Gateway) handleAdminUpdateRoute(w http.ResponseWriter, r *http.Request)
 	}
 
 	g.reloadConfig()
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request) {
@@ -489,7 +531,7 @@ func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request)
 	}
 
 	g.reloadConfig()
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) saveConfig(config Config) error {
@@ -501,7 +543,7 @@ func (g *Gateway) saveConfig(config Config) error {
 		return err
 	}
 
-	if err := g.store.SaveSettings(config.Listen, config.Admin.Username, config.Admin.Password, config.LogLimit); err != nil {
+	if err := g.store.SaveSettings(config.Listen, config.AdminListen, config.Admin.Username, config.Admin.Password, config.LogLimit); err != nil {
 		return errors.New("could not save config")
 	}
 
@@ -540,6 +582,7 @@ func (g *Gateway) adminPageData(message, errText string) adminPageData {
 
 	data := adminPageData{
 		Listen:          config.Listen,
+		AdminListen:     config.AdminListen,
 		AdminUsername:   config.Admin.Username,
 		AdminPassword:   config.Admin.Password,
 		LogLimit:        config.LogLimit,
@@ -770,6 +813,9 @@ func normalizeConfig(config Config) (Config, error) {
 	if config.Listen == "" {
 		config.Listen = ":8080"
 	}
+	if config.AdminListen == "" {
+		config.AdminListen = ":9090"
+	}
 	if config.LogLimit <= 0 {
 		config.LogLimit = 100
 	}
@@ -784,13 +830,18 @@ func settingsConfigFromForm(r *http.Request, current Config) (Config, error) {
 	if listen == "" {
 		listen = current.Listen
 	}
+	adminListen := strings.TrimSpace(r.FormValue("admin_listen"))
+	if adminListen == "" {
+		adminListen = current.AdminListen
+	}
 	username := strings.TrimSpace(r.FormValue("admin_username"))
 	if username == "" {
 		username = current.Admin.Username
 	}
 
 	config := Config{
-		Listen: listen,
+		Listen:      listen,
+		AdminListen: adminListen,
 		Admin: AdminConfig{
 			Username: username,
 			Password: current.Admin.Password,
@@ -986,7 +1037,7 @@ const adminTemplate = `<!doctype html>
   <header>
     <div>waiteway</div>
     <div class="header-actions">
-      <form method="post" action="/admin/logout"><button type="submit">logout</button></form>
+      <form method="post" action="/logout"><button type="submit">logout</button></form>
     </div>
   </header>
 
@@ -1026,7 +1077,7 @@ const adminTemplate = `<!doctype html>
                   <td>
                     <div class="row-actions">
                       <button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-require-api-key="{{ if $route.RequireAPIKey }}true{{ else }}false{{ end }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" data-route-api-keys="{{ range $i, $key := $route.APIKeys }}{{ if $i }}&#10;{{ end }}{{ $key }}{{ end }}" onclick="openEditRouteButton(this)">edit</button>
-                      <form method="post" action="/admin">
+                      <form method="post" action="/">
                         <input type="hidden" name="action" value="delete_route">
                         <input type="hidden" name="route_index" value="{{ $index }}">
                         <button type="submit">delete</button>
@@ -1105,13 +1156,13 @@ const adminTemplate = `<!doctype html>
         <div class="users-layout">
           <div class="create-user-panel">
             <h3>admin account</h3>
-            <form method="post" action="/admin">
+            <form method="post" action="/">
               <input type="hidden" name="action" value="save_settings">
               <input type="hidden" name="listen" value="{{ .Listen }}">
               <input type="text" name="admin_username" value="{{ .AdminUsername }}" placeholder="admin username">
               <button type="submit">save username</button>
             </form>
-            <form method="post" action="/admin">
+            <form method="post" action="/">
               <input type="hidden" name="action" value="change_password">
               <input type="password" name="current_password" placeholder="current password" required>
               <input type="password" name="new_password" placeholder="new password" required>
@@ -1125,9 +1176,14 @@ const adminTemplate = `<!doctype html>
               <table class="config-table">
                 <tbody>
                   <tr>
-                    <td><strong>listen</strong></td>
+                    <td><strong>gateway port</strong></td>
                     <td>{{ .Listen }}</td>
                     <td><button type="button" onclick="openSettingsModal('listen', '{{ .Listen }}')">edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><strong>admin port</strong></td>
+                    <td>{{ .AdminListen }}</td>
+                    <td><button type="button" onclick="openSettingsModal('admin_listen', '{{ .AdminListen }}')">edit</button></td>
                   </tr>
                   <tr>
                     <td><strong>log limit</strong></td>
@@ -1147,7 +1203,7 @@ const adminTemplate = `<!doctype html>
                 </tbody>
               </table>
               <div style="margin-top: 16px">
-                <form method="post" action="/admin" style="display:inline">
+                <form method="post" action="/" style="display:inline">
                   <input type="hidden" name="action" value="clear_logs">
                   <button type="submit">clear logs</button>
                 </form>
@@ -1162,7 +1218,7 @@ const adminTemplate = `<!doctype html>
   <div id="route-modal" class="modal hidden">
     <div class="modal-box">
       <h2 id="route-modal-title">add route</h2>
-      <form method="post" action="/admin">
+      <form method="post" action="/">
         <input type="hidden" id="route-action" name="action" value="add_route">
         <input type="hidden" id="route-index" name="route_index" value="">
         <label for="route-name">name</label>
@@ -1198,7 +1254,7 @@ const adminTemplate = `<!doctype html>
   <div id="settings-modal" class="modal hidden">
     <div class="modal-box">
       <h2 id="settings-modal-title">edit setting</h2>
-      <form method="post" action="/admin">
+      <form method="post" action="/">
         <input type="hidden" id="settings-action" name="action" value="save_settings">
         <input type="hidden" id="settings-listen" name="listen" value="{{ .Listen }}">
         <input type="hidden" id="settings-admin-username" name="admin_username" value="{{ .AdminUsername }}">
@@ -1214,9 +1270,10 @@ const adminTemplate = `<!doctype html>
 
   <script>
     var settingsFieldMap = {
-      'listen': { title: 'edit listen', action: 'save_settings', hidden: 'settings-listen' },
-      'admin_username': { title: 'edit admin username', action: 'save_settings', hidden: 'settings-admin-username' },
-      'log_limit': { title: 'edit log limit', action: 'save_logging', hidden: 'settings-log-limit' }
+      'listen': { title: 'edit gateway port', action: 'save_settings' },
+      'admin_listen': { title: 'edit admin port', action: 'save_settings' },
+      'admin_username': { title: 'edit admin username', action: 'save_settings' },
+      'log_limit': { title: 'edit log limit', action: 'save_logging' }
     }
 
     function openSettingsModal(field, currentValue) {
@@ -1298,7 +1355,7 @@ const loginTemplate = `<!DOCTYPE html>
   <div class="login-container">
     <div class="login-box">
       <h1>waiteway</h1>
-      <form method="post" action="/admin/login">
+      <form method="post" action="/login">
         <input type="text" name="username" placeholder="username" autocomplete="username" required>
         <input type="password" name="password" placeholder="password" autocomplete="current-password" required>
         <button type="submit">login</button>
