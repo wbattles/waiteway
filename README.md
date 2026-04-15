@@ -2,9 +2,9 @@
 
 Gateways made simple.
 
-https://waiteway.waisuite.com/waipage
-https://waiteway.waisuite.com/wailey
-https://waiteway.waisuite.com/waiconv
+- https://waiteway.waisuite.com/waipage
+- https://waiteway.waisuite.com/wailey
+- https://waiteway.waisuite.com/waiconv
 
 ## What it does
 
