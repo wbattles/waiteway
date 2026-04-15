@@ -99,10 +99,51 @@ helm install waiteway waiteway/waiteway \
 | `service.gateway.port` | `8080` | gateway service port |
 | `service.admin.type` | `ClusterIP` | admin service type |
 | `service.admin.port` | `9090` | admin service port |
+| `ingress.gateway.enabled` | `false` | enable gateway ingress |
+| `ingress.gateway.className` | `""` | ingress class (e.g. nginx, traefik) |
+| `ingress.gateway.hosts` | `api.example.com` | gateway hostname |
+| `ingress.admin.enabled` | `false` | enable admin ingress |
+| `ingress.admin.className` | `""` | ingress class |
+| `ingress.admin.hosts` | `admin.example.com` | admin hostname |
 | `persistence.enabled` | `true` | enable PVC for SQLite |
 | `persistence.size` | `1Gi` | PVC size |
 | `resources.requests.cpu` | `50m` | CPU request |
 | `resources.requests.memory` | `64Mi` | memory request |
+
+### Ingress
+
+Both gateway and admin have separate optional ingresses. Enable them independently.
+
+Gateway only (e.g. public API behind nginx ingress):
+
+```bash
+helm install waiteway waiteway/waiteway \
+  --set admin.password=your-password \
+  --set ingress.gateway.enabled=true \
+  --set ingress.gateway.className=nginx \
+  --set ingress.gateway.hosts[0].host=api.example.com
+```
+
+Admin only (e.g. internal network):
+
+```bash
+helm install waiteway waiteway/waiteway \
+  --set admin.password=your-password \
+  --set ingress.admin.enabled=true \
+  --set ingress.admin.className=nginx \
+  --set ingress.admin.hosts[0].host=admin.internal
+```
+
+Both:
+
+```bash
+helm install waiteway waiteway/waiteway \
+  --set admin.password=your-password \
+  --set ingress.gateway.enabled=true \
+  --set ingress.gateway.hosts[0].host=api.example.com \
+  --set ingress.admin.enabled=true \
+  --set ingress.admin.hosts[0].host=admin.internal
+```
 
 ## Environment variables
 
@@ -112,8 +153,10 @@ Waiteway reads these on **first run only**. Once the database has settings, env 
 |---|---|
 | `WAITEWAY_ADMIN_USERNAME` | admin username |
 | `WAITEWAY_ADMIN_PASSWORD` | admin password |
-| `WAITEWAY_LISTEN` | gateway listen address |
-| `WAITEWAY_ADMIN_LISTEN` | admin listen address |
+| `WAITEWAY_LISTEN` | gateway listen address (default `:8080`) |
+| `WAITEWAY_ADMIN_LISTEN` | admin listen address (default `:9090`) |
+
+Ports are set by environment variables or defaults only. They cannot be changed from the admin portal.
 
 ## Admin portal
 
@@ -121,7 +164,7 @@ Three tabs:
 
 - **gateway** — add, edit, delete routes. set per-route API keys.
 - **logging** — view request logs, stats, top routes.
-- **settings** — change password, edit gateway and admin ports, log limit.
+- **settings** — change password, username, log limit.
 
 ## Adding a route
 

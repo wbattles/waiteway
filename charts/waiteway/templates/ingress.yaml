@@ -1,0 +1,83 @@
+{{- if .Values.ingress.gateway.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-gateway
+  labels:
+    app: {{ .Release.Name }}
+  {{- with .Values.ingress.gateway.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.gateway.className }}
+  ingressClassName: {{ .Values.ingress.gateway.className }}
+  {{- end }}
+  {{- if .Values.ingress.gateway.tls }}
+  tls:
+    {{- range .Values.ingress.gateway.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.gateway.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ $.Release.Name }}-gateway
+                port:
+                  number: {{ $.Values.service.gateway.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
+---
+{{- if .Values.ingress.admin.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-admin
+  labels:
+    app: {{ .Release.Name }}
+  {{- with .Values.ingress.admin.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.admin.className }}
+  ingressClassName: {{ .Values.ingress.admin.className }}
+  {{- end }}
+  {{- if .Values.ingress.admin.tls }}
+  tls:
+    {{- range .Values.ingress.admin.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.admin.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ $.Release.Name }}-admin
+                port:
+                  number: {{ $.Values.service.admin.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
