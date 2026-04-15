@@ -44,20 +44,6 @@ docker build -t waiteway .
 docker run -p 8080:8080 -p 9090:9090 -v ./data:/data waiteway
 ```
 
-To only expose the gateway:
-
-```bash
-docker run -p 8080:8080 -v ./data:/data waiteway
-```
-
-## Run with Docker Compose
-
-```bash
-docker compose up --build
-```
-
-Edit `docker-compose.yml` to set your admin credentials before first run.
-
 ## Run with Kubernetes
 
 ### Add the Helm repo
@@ -110,41 +96,6 @@ helm install waiteway waiteway/waiteway \
 | `resources.requests.cpu` | `50m` | CPU request |
 | `resources.requests.memory` | `64Mi` | memory request |
 
-### Ingress
-
-Both gateway and admin have separate optional ingresses. Enable them independently.
-
-Gateway only (e.g. public API behind nginx ingress):
-
-```bash
-helm install waiteway waiteway/waiteway \
-  --set admin.password=your-password \
-  --set ingress.gateway.enabled=true \
-  --set ingress.gateway.className=nginx \
-  --set ingress.gateway.hosts[0].host=api.example.com
-```
-
-Admin only (e.g. internal network):
-
-```bash
-helm install waiteway waiteway/waiteway \
-  --set admin.password=your-password \
-  --set ingress.admin.enabled=true \
-  --set ingress.admin.className=nginx \
-  --set ingress.admin.hosts[0].host=admin.internal
-```
-
-Both:
-
-```bash
-helm install waiteway waiteway/waiteway \
-  --set admin.password=your-password \
-  --set ingress.gateway.enabled=true \
-  --set ingress.gateway.hosts[0].host=api.example.com \
-  --set ingress.admin.enabled=true \
-  --set ingress.admin.hosts[0].host=admin.internal
-```
-
 ## Environment variables
 
 Waiteway reads these on **first run only**. Once the database has settings, env vars are ignored. Admin portal changes stick after that. To re-seed from env vars, delete the database file.
@@ -175,33 +126,6 @@ Three tabs:
 5. Save
 
 Requests matching the path prefix get proxied to the target.
-
-## API key auth
-
-Each route can require an API key. Add keys to a route in the edit popup.
-
-Clients send keys with:
-
-```
-X-API-Key: your-key
-```
-
-or:
-
-```
-Authorization: Bearer your-key
-```
-
-## Storage
-
-Everything is stored in a single SQLite file.
-
-- routes
-- settings
-- request logs
-- sessions
-
-Logs and sessions persist across restarts.
 
 ## Architecture
 
