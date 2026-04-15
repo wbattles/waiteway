@@ -265,18 +265,19 @@ func newSingleHostProxy(target *url.URL, route Route) *httputil.ReverseProxy {
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
 
-		incomingPath := req.URL.Path
 		if route.StripPrefix {
-			trimmed := strings.TrimPrefix(incomingPath, route.PathPrefix)
-			if trimmed == "" {
-				trimmed = "/"
+			incomingPath := req.URL.Path
+			// originalDirector already prepended target.Path, so undo that
+			trimmed := strings.TrimPrefix(incomingPath, target.Path)
+			trimmed = strings.TrimPrefix(trimmed, route.PathPrefix)
+			if trimmed == "" || trimmed == "/" {
+				req.URL.Path = target.Path
+			} else {
+				if !strings.HasPrefix(trimmed, "/") {
+					trimmed = "/" + trimmed
+				}
+				req.URL.Path = joinURLPath(target.Path, trimmed)
 			}
-			if !strings.HasPrefix(trimmed, "/") {
-				trimmed = "/" + trimmed
-			}
-			req.URL.Path = joinURLPath(target.Path, trimmed)
-		} else {
-			req.URL.Path = joinURLPath(target.Path, incomingPath)
 		}
 
 		req.Host = target.Host
