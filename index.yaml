@@ -1,3 +1,14 @@
 apiVersion: v1
-entries: {}
-generated: "2026-04-14T00:00:00Z"
+entries:
+  waiteway:
+  - apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-04-15T03:16:04.659285114Z"
+    description: Simple API gateway for Waisuite apps
+    digest: d6ba45ad739cf2044ea6ba449d10c79959abd6d02bdab0d2250ffdb3f5cf6864
+    name: waiteway
+    type: application
+    urls:
+    - https://github.com/wbattles/waiteway/releases/download/waiteway-0.1.0/waiteway-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-04-15T03:16:04.659295523Z"
