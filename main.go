@@ -20,39 +20,35 @@ import (
 )
 
 type Config struct {
-	Listen   string      `json:"listen"`
-	Admin    AdminConfig `json:"admin"`
-	APIKeys  []string    `json:"api_keys"`
-	LogLimit int         `json:"log_limit"`
-	Routes   []Route     `json:"routes"`
+	Listen   string
+	Admin    AdminConfig
+	LogLimit int
+	Routes   []Route
 }
 
 type AdminConfig struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username string
+	Password string
 }
 
 type Route struct {
-	Name          string   `json:"name"`
-	PathPrefix    string   `json:"path_prefix"`
-	Target        string   `json:"target"`
-	RequireAPIKey bool     `json:"require_api_key"`
-	StripPrefix   bool     `json:"strip_prefix"`
-	APIKeys       []string `json:"api_keys,omitempty"`
+	Name          string
+	PathPrefix    string
+	Target        string
+	RequireAPIKey bool
+	StripPrefix   bool
+	APIKeys       []string
 }
 
 type Gateway struct {
-	mu         sync.RWMutex
-	configPath string
-	config     Config
-	routes     []compiledRoute
-	apiKeys    map[string]struct{}
-	logs       *requestLogStore
-	tmpl       *template.Template
-	loginTmpl  *template.Template
-	sessionsMu sync.Mutex
-	sessions   map[string]struct{}
-	startedAt  time.Time
+	mu        sync.RWMutex
+	store     *Store
+	config    Config
+	routes    []compiledRoute
+	apiKeys   map[string]struct{}
+	tmpl      *template.Template
+	loginTmpl *template.Template
+	startedAt time.Time
 }
 
 type compiledRoute struct {
@@ -72,12 +68,6 @@ type requestLog struct {
 	Duration   time.Duration
 }
 
-type requestLogStore struct {
-	mu      sync.Mutex
-	limit   int
-	entries []requestLog
-}
-
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -95,7 +85,6 @@ type adminPageData struct {
 	Logs            []requestLog
 	LogStats        logStats
 	RouteStats      []routeStat
-	Now             time.Time
 	Uptime          string
 	Message         string
 	Error           string
@@ -120,20 +109,34 @@ type loginPageData struct {
 	Error string
 }
 
-const defaultConfigPath = "waiteway.json"
+const defaultDBPath = "waiteway.db"
 
 func main() {
-	configPath := defaultConfigPath
+	dbPath := defaultDBPath
 	if len(os.Args) > 1 {
-		configPath = os.Args[1]
+		dbPath = os.Args[1]
 	}
 
-	config, err := loadConfig(configPath)
+	store, err := openStore(dbPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer store.Close()
+
+	if !store.HasRoutes() {
+		store.AddRoute(Route{
+			Name:       "example",
+			PathPrefix: "/api/example",
+			Target:     "http://localhost:3000",
+		})
+	}
+
+	config, err := store.LoadConfig()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	gateway, err := newGateway(configPath, config)
+	gateway, err := newGateway(store, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -144,32 +147,7 @@ func main() {
 	}
 }
 
-func loadConfig(path string) (Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return Config{}, fmt.Errorf("read config: %w", err)
-	}
-
-	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
-		return Config{}, fmt.Errorf("parse config: %w", err)
-	}
-
-	if config.Listen == "" {
-		config.Listen = ":8080"
-	}
-	if config.LogLimit <= 0 {
-		config.LogLimit = 100
-	}
-
-	if len(config.Routes) == 0 {
-		return Config{}, errors.New("config needs at least one route")
-	}
-
-	return config, nil
-}
-
-func newGateway(configPath string, config Config) (*Gateway, error) {
+func newGateway(store *Store, config Config) (*Gateway, error) {
 	tmpl, err := template.New("admin").Funcs(template.FuncMap{
 		"formatDurationMS": formatDurationMS,
 	}).Parse(adminTemplate)
@@ -183,12 +161,10 @@ func newGateway(configPath string, config Config) (*Gateway, error) {
 	}
 
 	g := &Gateway{
-		configPath: configPath,
-		logs:       &requestLogStore{limit: config.LogLimit},
-		startedAt:  time.Now(),
-		tmpl:       tmpl,
-		loginTmpl:  loginTmpl,
-		sessions:   make(map[string]struct{}),
+		store:     store,
+		startedAt: time.Now(),
+		tmpl:      tmpl,
+		loginTmpl: loginTmpl,
 	}
 
 	if err := g.applyConfig(config); err != nil {
@@ -210,19 +186,11 @@ func (g *Gateway) applyConfig(config Config) error {
 	g.config = config
 	g.routes = routes
 	g.apiKeys = apiKeys
-	g.logs.setLimit(config.LogLimit)
 	return nil
 }
 
 func compileConfig(config Config) ([]compiledRoute, map[string]struct{}, error) {
-	apiKeys := make(map[string]struct{}, len(config.APIKeys))
-
-	for _, key := range config.APIKeys {
-		if key == "" {
-			continue
-		}
-		apiKeys[key] = struct{}{}
-	}
+	apiKeys := make(map[string]struct{})
 
 	routes := make([]compiledRoute, 0, len(config.Routes))
 	for _, route := range config.Routes {
@@ -349,9 +317,7 @@ func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g.sessionsMu.Lock()
-	g.sessions[sessionID] = struct{}{}
-	g.sessionsMu.Unlock()
+	g.store.AddSession(sessionID)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "waiteway_admin",
@@ -371,9 +337,7 @@ func (g *Gateway) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if cookie, err := r.Cookie("waiteway_admin"); err == nil {
-		g.sessionsMu.Lock()
-		delete(g.sessions, cookie.Value)
-		g.sessionsMu.Unlock()
+		g.store.DeleteSession(cookie.Value)
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -414,7 +378,7 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) handleAdminClearLogs(w http.ResponseWriter, r *http.Request) {
-	g.logs.clear()
+	g.store.ClearLogs()
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
@@ -479,12 +443,12 @@ func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config.Routes = append(config.Routes, route)
-	if err := g.saveConfig(config); err != nil {
+	if err := g.store.AddRoute(route); err != nil {
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
+	g.reloadConfig()
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
@@ -502,12 +466,12 @@ func (g *Gateway) handleAdminUpdateRoute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	config.Routes[index] = route
-	if err := g.saveConfig(config); err != nil {
+	if err := g.store.UpdateRoute(index, route); err != nil {
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
+	g.reloadConfig()
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
@@ -519,17 +483,12 @@ func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	config.Routes = append(config.Routes[:index], config.Routes[index+1:]...)
-	if len(config.Routes) == 0 {
-		g.renderAdminForm(w, config, "", "config needs at least one route")
-		return
-	}
-
-	if err := g.saveConfig(config); err != nil {
+	if err := g.store.DeleteRoute(index); err != nil {
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
+	g.reloadConfig()
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
@@ -542,12 +501,7 @@ func (g *Gateway) saveConfig(config Config) error {
 		return err
 	}
 
-	pretty, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return errors.New("could not format config")
-	}
-
-	if err := os.WriteFile(g.configPath, append(pretty, '\n'), 0644); err != nil {
+	if err := g.store.SaveSettings(config.Listen, config.Admin.Username, config.Admin.Password, config.LogLimit); err != nil {
 		return errors.New("could not save config")
 	}
 
@@ -558,11 +512,19 @@ func (g *Gateway) saveConfig(config Config) error {
 	return nil
 }
 
+func (g *Gateway) reloadConfig() error {
+	config, err := g.store.LoadConfig()
+	if err != nil {
+		return err
+	}
+	return g.applyConfig(config)
+}
+
 func (g *Gateway) adminPageData(message, errText string) adminPageData {
 	config := g.currentConfig()
 	routes := make([]Route, len(config.Routes))
 	copy(routes, config.Routes)
-	logs := g.logs.list()
+	logs, _ := g.store.ListLogs(config.LogLimit)
 	stats, routeStats := summarizeLogs(logs)
 	openRoutes := 0
 	protectedRoutes := 0
@@ -588,7 +550,6 @@ func (g *Gateway) adminPageData(message, errText string) adminPageData {
 		Logs:            logs,
 		LogStats:        stats,
 		RouteStats:      routeStats,
-		Now:             time.Now(),
 		Uptime:          formatUptime(time.Since(g.startedAt)),
 		Message:         message,
 		Error:           errText,
@@ -631,14 +592,7 @@ func (g *Gateway) authorizeAdmin(r *http.Request) bool {
 		return false
 	}
 
-	g.sessionsMu.Lock()
-	_, ok := g.sessions[cookie.Value]
-	g.sessionsMu.Unlock()
-	if ok {
-		return true
-	}
-
-	return false
+	return g.store.HasSession(cookie.Value)
 }
 
 func (g *Gateway) renderLogin(w http.ResponseWriter, errText string) {
@@ -716,7 +670,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	if route.RequireAPIKey && !g.authorizeAPIKey(route, r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		g.logs.add(requestLog{
+		g.store.AddLog(requestLog{
 			Time:       time.Now(),
 			Method:     r.Method,
 			Path:       r.URL.Path,
@@ -730,7 +684,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	start := time.Now()
 	route.proxy.ServeHTTP(recorder, r)
-	g.logs.add(requestLog{
+	g.store.AddLog(requestLog{
 		Time:       time.Now(),
 		Method:     r.Method,
 		Path:       r.URL.Path,
@@ -784,41 +738,6 @@ func (g *Gateway) currentConfig() Config {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.config
-}
-
-func (l *requestLogStore) add(entry requestLog) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	l.entries = append([]requestLog{entry}, l.entries...)
-	if len(l.entries) > l.limit {
-		l.entries = l.entries[:l.limit]
-	}
-}
-
-func (l *requestLogStore) list() []requestLog {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	entries := make([]requestLog, len(l.entries))
-	copy(entries, l.entries)
-	return entries
-}
-
-func (l *requestLogStore) setLimit(limit int) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	l.limit = limit
-	if len(l.entries) > l.limit {
-		l.entries = l.entries[:l.limit]
-	}
-}
-
-func (l *requestLogStore) clear() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.entries = nil
 }
 
 func (s *statusRecorder) WriteHeader(statusCode int) {
@@ -876,7 +795,6 @@ func settingsConfigFromForm(r *http.Request, current Config) (Config, error) {
 			Username: username,
 			Password: current.Admin.Password,
 		},
-		APIKeys:  current.APIKeys,
 		LogLimit: current.LogLimit,
 		Routes:   current.Routes,
 	}

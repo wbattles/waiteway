@@ -1,2 +1,4 @@
 waiteway
-waiteway.json
+waiteway.db
+waiteway.db-shm
+waiteway.db-wal
