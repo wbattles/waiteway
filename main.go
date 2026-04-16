@@ -879,7 +879,8 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r = requestWithPolicyContext(r, route.policy)
+	r, cancelTimeout := requestWithPolicyContext(r, route.policy)
+	defer cancelTimeout()
 
 	if cached, ok := g.cachedPolicyResponse(route, r); ok {
 		w.Header().Set("X-Waiteway-Cache", "HIT")
