@@ -253,7 +253,6 @@ func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, 
 			return nil, nil, nil, fmt.Errorf("parse target %q: %w", route.Target, err)
 		}
 
-		proxy := newSingleHostProxy(targetURL, route)
 		routeAPIKeys := make(map[string]struct{}, len(route.APIKeys))
 		for _, key := range route.APIKeys {
 			if key == "" {
@@ -270,6 +269,8 @@ func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, 
 				return nil, nil, nil, fmt.Errorf("route %q uses unknown policy %q", route.Name, route.PolicyName)
 			}
 		}
+
+		proxy := newSingleHostProxy(targetURL, route, policyRef)
 		routes = append(routes, compiledRoute{
 			Route:     route,
 			targetURL: targetURL,
@@ -286,7 +287,7 @@ func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, 
 	return routes, policies, apiKeys, nil
 }
 
-func newSingleHostProxy(target *url.URL, route Route) *httputil.ReverseProxy {
+func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *httputil.ReverseProxy {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
@@ -307,9 +308,27 @@ func newSingleHostProxy(target *url.URL, route Route) *httputil.ReverseProxy {
 			}
 		}
 
+		if policy != nil && policy.RewritePathPrefix != "" {
+			rewritten := strings.TrimPrefix(req.URL.Path, target.Path)
+			if strings.HasPrefix(rewritten, route.PathPrefix) {
+				remainder := strings.TrimPrefix(rewritten, route.PathPrefix)
+				if remainder != "" && !strings.HasPrefix(remainder, "/") {
+					remainder = "/" + remainder
+				}
+				req.URL.Path = joinURLPath(target.Path, policy.RewritePathPrefix+remainder)
+			}
+		}
+
 		req.Host = target.Host
 		req.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
 		req.Header.Set("X-Waiteway-Route", route.Name)
+	}
+
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		return applyResponsePolicy(policy, resp)
+	}
+	if policy != nil && policy.RetryCount > 0 {
+		proxy.Transport = &retryTransport{base: http.DefaultTransport, retries: policy.RetryCount}
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -824,6 +843,11 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if applyCORSPreflight(route.policy, w, r) {
+		g.store.AddLog(requestLog{Time: time.Now(), Method: r.Method, Path: r.URL.Path, Status: http.StatusNoContent, Route: route.Name, RemoteAddr: r.RemoteAddr})
+		return
+	}
+
 	if ok, status, message := g.authorizePolicy(route, r); !ok {
 		http.Error(w, message, status)
 		g.store.AddLog(requestLog{
@@ -837,7 +861,10 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r = requestWithPolicyContext(r, route.policy)
+
 	if cached, ok := g.cachedPolicyResponse(route, r); ok {
+		w.Header().Set("X-Waiteway-Cache", "HIT")
 		writeCachedResponse(w, cached)
 		g.store.AddLog(requestLog{
 			Time:       time.Now(),
@@ -859,9 +886,17 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	route.proxy.ServeHTTP(writer, r)
 	if writer == cacheRecorder {
+		w.Header().Set("X-Waiteway-Cache", "MISS")
 		copyResponse(w, cacheRecorder)
 		recorder.status = cacheRecorder.status
 		g.storeCachedPolicyResponse(route, r, cacheRecorder)
+	}
+	if route.policy != nil && route.policy.circuitBreaker != nil {
+		if recorder.status >= http.StatusInternalServerError {
+			route.policy.circuitBreaker.RecordFailure(time.Now())
+		} else {
+			route.policy.circuitBreaker.RecordSuccess()
+		}
 	}
 	g.store.AddLog(requestLog{
 		Time:       time.Now(),
@@ -1025,6 +1060,14 @@ func routeFromForm(r *http.Request) (Route, error) {
 }
 
 func policyFromForm(r *http.Request) (Policy, error) {
+	requestTimeoutSeconds, err := intFromForm(r, "policy_request_timeout_seconds")
+	if err != nil {
+		return Policy{}, err
+	}
+	retryCount, err := intFromForm(r, "policy_retry_count")
+	if err != nil {
+		return Policy{}, err
+	}
 	rateLimitRequests, err := intFromForm(r, "policy_rate_limit_requests")
 	if err != nil {
 		return Policy{}, err
@@ -1041,17 +1084,49 @@ func policyFromForm(r *http.Request) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
+	maxResponseBytes, err := int64FromForm(r, "policy_max_response_bytes")
+	if err != nil {
+		return Policy{}, err
+	}
+	circuitBreakerFailures, err := intFromForm(r, "policy_circuit_breaker_failures")
+	if err != nil {
+		return Policy{}, err
+	}
+	circuitBreakerResetSeconds, err := intFromForm(r, "policy_circuit_breaker_reset_seconds")
+	if err != nil {
+		return Policy{}, err
+	}
 
 	policy := Policy{
-		Name:                   strings.TrimSpace(r.FormValue("policy_name")),
-		RequireAPIKey:          r.FormValue("policy_require_api_key") == "true",
-		APIKeys:                splitLines(r.FormValue("policy_api_keys")),
-		RateLimitRequests:      rateLimitRequests,
-		RateLimitWindowSeconds: rateLimitWindowSeconds,
-		MaxPayloadBytes:        maxPayloadBytes,
-		CacheTTLSeconds:        cacheTTLSeconds,
-		IPAllowList:            splitLines(r.FormValue("policy_ip_allow_list")),
-		IPBlockList:            splitLines(r.FormValue("policy_ip_block_list")),
+		Name:                       strings.TrimSpace(r.FormValue("policy_name")),
+		RequestTimeoutSeconds:      requestTimeoutSeconds,
+		RetryCount:                 retryCount,
+		RequireAPIKey:              r.FormValue("policy_require_api_key") == "true",
+		APIKeys:                    splitLines(r.FormValue("policy_api_keys")),
+		BasicAuthUsername:          strings.TrimSpace(r.FormValue("policy_basic_auth_username")),
+		BasicAuthPassword:          r.FormValue("policy_basic_auth_password"),
+		RateLimitRequests:          rateLimitRequests,
+		RateLimitWindowSeconds:     rateLimitWindowSeconds,
+		AllowedMethods:             splitLines(strings.ToUpper(r.FormValue("policy_allowed_methods"))),
+		RewritePathPrefix:          normalizePathPrefix(strings.TrimSpace(r.FormValue("policy_rewrite_path_prefix"))),
+		AddRequestHeaders:          splitLines(r.FormValue("policy_add_request_headers")),
+		RemoveRequestHeaders:       splitLines(r.FormValue("policy_remove_request_headers")),
+		MaxPayloadBytes:            maxPayloadBytes,
+		RequestTransformFind:       r.FormValue("policy_request_transform_find"),
+		RequestTransformReplace:    r.FormValue("policy_request_transform_replace"),
+		CacheTTLSeconds:            cacheTTLSeconds,
+		AddResponseHeaders:         splitLines(r.FormValue("policy_add_response_headers")),
+		RemoveResponseHeaders:      splitLines(r.FormValue("policy_remove_response_headers")),
+		ResponseTransformFind:      r.FormValue("policy_response_transform_find"),
+		ResponseTransformReplace:   r.FormValue("policy_response_transform_replace"),
+		MaxResponseBytes:           maxResponseBytes,
+		CORSAllowOrigins:           splitLines(r.FormValue("policy_cors_allow_origins")),
+		CORSAllowMethods:           splitLines(strings.ToUpper(r.FormValue("policy_cors_allow_methods"))),
+		CORSAllowHeaders:           splitLines(r.FormValue("policy_cors_allow_headers")),
+		IPAllowList:                splitLines(r.FormValue("policy_ip_allow_list")),
+		IPBlockList:                splitLines(r.FormValue("policy_ip_block_list")),
+		CircuitBreakerFailures:     circuitBreakerFailures,
+		CircuitBreakerResetSeconds: circuitBreakerResetSeconds,
 	}
 
 	if policy.Name == "" {
@@ -1062,6 +1137,12 @@ func policyFromForm(r *http.Request) (Policy, error) {
 	}
 	if policy.RateLimitWindowSeconds > 0 && policy.RateLimitRequests <= 0 {
 		return Policy{}, errors.New("rate limit requests is required")
+	}
+	if policy.CircuitBreakerFailures > 0 && policy.CircuitBreakerResetSeconds <= 0 {
+		return Policy{}, errors.New("circuit breaker reset seconds is required")
+	}
+	if policy.CircuitBreakerResetSeconds > 0 && policy.CircuitBreakerFailures <= 0 {
+		return Policy{}, errors.New("circuit breaker failures is required")
 	}
 	return policy, nil
 }
@@ -1369,7 +1450,7 @@ const adminTemplate = `<!doctype html>
                   <td><span class="scroll-cell">{{ policySummary $policy }}</span></td>
                   <td>
                     <div class="row-actions">
-                      <button type="button" data-policy-index="{{ $index }}" data-policy-name="{{ $policy.Name }}" data-policy-require-api-key="{{ if $policy.RequireAPIKey }}true{{ else }}false{{ end }}" data-policy-api-keys="{{ range $i, $key := $policy.APIKeys }}{{ if $i }}&#10;{{ end }}{{ $key }}{{ end }}" data-policy-rate-limit-requests="{{ $policy.RateLimitRequests }}" data-policy-rate-limit-window-seconds="{{ $policy.RateLimitWindowSeconds }}" data-policy-max-payload-bytes="{{ $policy.MaxPayloadBytes }}" data-policy-cache-ttl-seconds="{{ $policy.CacheTTLSeconds }}" data-policy-ip-allow-list="{{ range $i, $item := $policy.IPAllowList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-block-list="{{ range $i, $item := $policy.IPBlockList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" onclick="openEditPolicyButton(this)">edit</button>
+                      <button type="button" data-policy-index="{{ $index }}" data-policy-name="{{ $policy.Name }}" data-policy-request-timeout-seconds="{{ $policy.RequestTimeoutSeconds }}" data-policy-retry-count="{{ $policy.RetryCount }}" data-policy-require-api-key="{{ if $policy.RequireAPIKey }}true{{ else }}false{{ end }}" data-policy-api-keys="{{ range $i, $key := $policy.APIKeys }}{{ if $i }}&#10;{{ end }}{{ $key }}{{ end }}" data-policy-basic-auth-username="{{ $policy.BasicAuthUsername }}" data-policy-basic-auth-password="{{ $policy.BasicAuthPassword }}" data-policy-rate-limit-requests="{{ $policy.RateLimitRequests }}" data-policy-rate-limit-window-seconds="{{ $policy.RateLimitWindowSeconds }}" data-policy-allowed-methods="{{ range $i, $item := $policy.AllowedMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-rewrite-path-prefix="{{ $policy.RewritePathPrefix }}" data-policy-add-request-headers="{{ range $i, $item := $policy.AddRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-request-headers="{{ range $i, $item := $policy.RemoveRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-max-payload-bytes="{{ $policy.MaxPayloadBytes }}" data-policy-request-transform-find="{{ $policy.RequestTransformFind }}" data-policy-request-transform-replace="{{ $policy.RequestTransformReplace }}" data-policy-cache-ttl-seconds="{{ $policy.CacheTTLSeconds }}" data-policy-add-response-headers="{{ range $i, $item := $policy.AddResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-response-headers="{{ range $i, $item := $policy.RemoveResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-response-transform-find="{{ $policy.ResponseTransformFind }}" data-policy-response-transform-replace="{{ $policy.ResponseTransformReplace }}" data-policy-max-response-bytes="{{ $policy.MaxResponseBytes }}" data-policy-cors-allow-origins="{{ range $i, $item := $policy.CORSAllowOrigins }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-methods="{{ range $i, $item := $policy.CORSAllowMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-headers="{{ range $i, $item := $policy.CORSAllowHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-allow-list="{{ range $i, $item := $policy.IPAllowList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-block-list="{{ range $i, $item := $policy.IPBlockList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-circuit-breaker-failures="{{ $policy.CircuitBreakerFailures }}" data-policy-circuit-breaker-reset-seconds="{{ $policy.CircuitBreakerResetSeconds }}" onclick="openEditPolicyButton(this)">edit</button>
                       <form method="post" action="/">
                         <input type="hidden" name="action" value="delete_policy">
                         <input type="hidden" name="policy_index" value="{{ $index }}">
@@ -1567,6 +1648,32 @@ const adminTemplate = `<!doctype html>
           <button type="button" onclick="openPolicyAddModal()">add feature</button>
         </div>
         <div id="policy-features" class="policy-features">
+          <section id="feature-timeout" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>request timeout</h3>
+              <button type="button" onclick="removePolicyFeature('timeout')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-request-timeout-seconds">timeout seconds</label>
+                <input id="policy-request-timeout-seconds" type="number" name="policy_request_timeout_seconds" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-retry" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>retry</h3>
+              <button type="button" onclick="removePolicyFeature('retry')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-retry-count">retry count</label>
+                <input id="policy-retry-count" type="number" name="policy_retry_count" value="" min="0">
+              </div>
+            </div>
+          </section>
+
           <section id="feature-api-key" class="policy-feature-card hidden">
             <div class="policy-feature-header">
               <h3>api key auth</h3>
@@ -1583,6 +1690,23 @@ const adminTemplate = `<!doctype html>
               <div class="policy-field">
                 <label for="policy-api-keys">api keys</label>
                 <textarea id="policy-api-keys" name="policy_api_keys" placeholder="one key per line"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-basic-auth" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>basic auth</h3>
+              <button type="button" onclick="removePolicyFeature('basic-auth')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-basic-auth-username">username</label>
+                <input id="policy-basic-auth-username" type="text" name="policy_basic_auth_username" value="">
+              </div>
+              <div class="policy-field">
+                <label for="policy-basic-auth-password">password</label>
+                <input id="policy-basic-auth-password" type="text" name="policy_basic_auth_password" value="">
               </div>
             </div>
           </section>
@@ -1604,6 +1728,49 @@ const adminTemplate = `<!doctype html>
             </div>
           </section>
 
+          <section id="feature-methods" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>method allow list</h3>
+              <button type="button" onclick="removePolicyFeature('methods')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-allowed-methods">methods</label>
+                <textarea id="policy-allowed-methods" name="policy_allowed_methods" placeholder="one method per line"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-rewrite" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>path rewrite</h3>
+              <button type="button" onclick="removePolicyFeature('rewrite')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-rewrite-path-prefix">new path prefix</label>
+                <input id="policy-rewrite-path-prefix" type="text" name="policy_rewrite_path_prefix" value="">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-request-headers" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>request headers</h3>
+              <button type="button" onclick="removePolicyFeature('request-headers')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-add-request-headers">add headers</label>
+                <textarea id="policy-add-request-headers" name="policy_add_request_headers" placeholder="Header-Name: value"></textarea>
+              </div>
+              <div class="policy-field">
+                <label for="policy-remove-request-headers">remove headers</label>
+                <textarea id="policy-remove-request-headers" name="policy_remove_request_headers" placeholder="Header-Name"></textarea>
+              </div>
+            </div>
+          </section>
+
           <section id="feature-payload-limit" class="policy-feature-card hidden">
             <div class="policy-feature-header">
               <h3>payload limit</h3>
@@ -1617,6 +1784,23 @@ const adminTemplate = `<!doctype html>
             </div>
           </section>
 
+          <section id="feature-request-transform" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>request transform</h3>
+              <button type="button" onclick="removePolicyFeature('request-transform')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-request-transform-find">find</label>
+                <input id="policy-request-transform-find" type="text" name="policy_request_transform_find" value="">
+              </div>
+              <div class="policy-field">
+                <label for="policy-request-transform-replace">replace</label>
+                <input id="policy-request-transform-replace" type="text" name="policy_request_transform_replace" value="">
+              </div>
+            </div>
+          </section>
+
           <section id="feature-cache" class="policy-feature-card hidden">
             <div class="policy-feature-header">
               <h3>caching</h3>
@@ -1626,6 +1810,74 @@ const adminTemplate = `<!doctype html>
               <div class="policy-field">
                 <label for="policy-cache-ttl-seconds">cache ttl seconds</label>
                 <input id="policy-cache-ttl-seconds" type="number" name="policy_cache_ttl_seconds" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-response-headers" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>response headers</h3>
+              <button type="button" onclick="removePolicyFeature('response-headers')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-add-response-headers">add headers</label>
+                <textarea id="policy-add-response-headers" name="policy_add_response_headers" placeholder="Header-Name: value"></textarea>
+              </div>
+              <div class="policy-field">
+                <label for="policy-remove-response-headers">remove headers</label>
+                <textarea id="policy-remove-response-headers" name="policy_remove_response_headers" placeholder="Header-Name"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-response-transform" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>response transform</h3>
+              <button type="button" onclick="removePolicyFeature('response-transform')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-response-transform-find">find</label>
+                <input id="policy-response-transform-find" type="text" name="policy_response_transform_find" value="">
+              </div>
+              <div class="policy-field">
+                <label for="policy-response-transform-replace">replace</label>
+                <input id="policy-response-transform-replace" type="text" name="policy_response_transform_replace" value="">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-response-limit" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>response size limit</h3>
+              <button type="button" onclick="removePolicyFeature('response-limit')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-max-response-bytes">max response bytes</label>
+                <input id="policy-max-response-bytes" type="number" name="policy_max_response_bytes" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-cors" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>cors</h3>
+              <button type="button" onclick="removePolicyFeature('cors')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-cors-allow-origins">allow origins</label>
+                <textarea id="policy-cors-allow-origins" name="policy_cors_allow_origins" placeholder="one origin per line"></textarea>
+              </div>
+              <div class="policy-field">
+                <label for="policy-cors-allow-methods">allow methods</label>
+                <textarea id="policy-cors-allow-methods" name="policy_cors_allow_methods" placeholder="one method per line"></textarea>
+              </div>
+              <div class="policy-field">
+                <label for="policy-cors-allow-headers">allow headers</label>
+                <textarea id="policy-cors-allow-headers" name="policy_cors_allow_headers" placeholder="one header per line"></textarea>
               </div>
             </div>
           </section>
@@ -1655,6 +1907,23 @@ const adminTemplate = `<!doctype html>
               </div>
             </div>
           </section>
+
+          <section id="feature-circuit-breaker" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>circuit breaker</h3>
+              <button type="button" onclick="removePolicyFeature('circuit-breaker')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-circuit-breaker-failures">failures</label>
+                <input id="policy-circuit-breaker-failures" type="number" name="policy_circuit_breaker_failures" value="" min="0">
+              </div>
+              <div class="policy-field">
+                <label for="policy-circuit-breaker-reset-seconds">reset seconds</label>
+                <input id="policy-circuit-breaker-reset-seconds" type="number" name="policy_circuit_breaker_reset_seconds" value="" min="0">
+              </div>
+            </div>
+          </section>
         </div>
         <div class="modal-actions">
           <button type="submit">save</button>
@@ -1668,12 +1937,24 @@ const adminTemplate = `<!doctype html>
     <div class="modal-box">
       <h2>add policy feature</h2>
       <div class="policy-add-list">
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('timeout')"><strong>request timeout</strong><small>stop slow upstream calls</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('retry')"><strong>retry</strong><small>retry network failures a few times</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('api-key')"><strong>api key auth</strong><small>require a key and optionally list allowed keys</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('basic-auth')"><strong>basic auth</strong><small>protect with username and password</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('rate-limit')"><strong>rate limiting</strong><small>limit requests in a time window</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('methods')"><strong>method allow list</strong><small>allow only specific HTTP methods</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('rewrite')"><strong>path rewrite</strong><small>replace the matched route prefix</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('request-headers')"><strong>request headers</strong><small>add or remove headers before proxying</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('payload-limit')"><strong>payload limit</strong><small>reject bodies over a size limit</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('request-transform')"><strong>request transform</strong><small>simple request body find and replace</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('cache')"><strong>caching</strong><small>cache successful GET responses</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('response-headers')"><strong>response headers</strong><small>add or remove response headers</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('response-transform')"><strong>response transform</strong><small>simple response body find and replace</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('response-limit')"><strong>response size limit</strong><small>reject oversized upstream responses</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('cors')"><strong>cors</strong><small>set allowed origins, methods, and headers</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('ip-allow')"><strong>ip allow list</strong><small>only allow listed ips or cidrs</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('ip-block')"><strong>ip block list</strong><small>deny listed ips or cidrs</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('circuit-breaker')"><strong>circuit breaker</strong><small>pause a failing upstream for a short time</small></button>
       </div>
       <div class="modal-actions">
         <button type="button" onclick="closePolicyAddModal()">close</button>
@@ -1687,11 +1968,30 @@ const adminTemplate = `<!doctype html>
     }
 
     var policyFeatureMap = {
+      'timeout': {
+        cardId: 'feature-timeout',
+        reset: function () {
+          document.getElementById('policy-request-timeout-seconds').value = ''
+        }
+      },
+      'retry': {
+        cardId: 'feature-retry',
+        reset: function () {
+          document.getElementById('policy-retry-count').value = ''
+        }
+      },
       'api-key': {
         cardId: 'feature-api-key',
         reset: function () {
           document.getElementById('policy-require-api-key').value = 'false'
           document.getElementById('policy-api-keys').value = ''
+        }
+      },
+      'basic-auth': {
+        cardId: 'feature-basic-auth',
+        reset: function () {
+          document.getElementById('policy-basic-auth-username').value = ''
+          document.getElementById('policy-basic-auth-password').value = ''
         }
       },
       'rate-limit': {
@@ -1701,16 +2001,70 @@ const adminTemplate = `<!doctype html>
           document.getElementById('policy-rate-limit-window-seconds').value = ''
         }
       },
+      'methods': {
+        cardId: 'feature-methods',
+        reset: function () {
+          document.getElementById('policy-allowed-methods').value = ''
+        }
+      },
+      'rewrite': {
+        cardId: 'feature-rewrite',
+        reset: function () {
+          document.getElementById('policy-rewrite-path-prefix').value = ''
+        }
+      },
+      'request-headers': {
+        cardId: 'feature-request-headers',
+        reset: function () {
+          document.getElementById('policy-add-request-headers').value = ''
+          document.getElementById('policy-remove-request-headers').value = ''
+        }
+      },
       'payload-limit': {
         cardId: 'feature-payload-limit',
         reset: function () {
           document.getElementById('policy-max-payload-bytes').value = ''
         }
       },
+      'request-transform': {
+        cardId: 'feature-request-transform',
+        reset: function () {
+          document.getElementById('policy-request-transform-find').value = ''
+          document.getElementById('policy-request-transform-replace').value = ''
+        }
+      },
       'cache': {
         cardId: 'feature-cache',
         reset: function () {
           document.getElementById('policy-cache-ttl-seconds').value = ''
+        }
+      },
+      'response-headers': {
+        cardId: 'feature-response-headers',
+        reset: function () {
+          document.getElementById('policy-add-response-headers').value = ''
+          document.getElementById('policy-remove-response-headers').value = ''
+        }
+      },
+      'response-transform': {
+        cardId: 'feature-response-transform',
+        reset: function () {
+          document.getElementById('policy-response-transform-find').value = ''
+          document.getElementById('policy-response-transform-replace').value = ''
+        }
+      },
+      'response-limit': {
+        cardId: 'feature-response-limit',
+        reset: function () {
+          document.getElementById('policy-max-response-bytes').value = ''
+        }
+      },
+      'cors': {
+        cardId: 'feature-cors',
+        reset: function () {
+          document.getElementById('policy-cors-allow-origins').value = ''
+          document.getElementById('policy-cors-allow-methods').value = ''
+          document.getElementById('policy-cors-allow-headers').value = ''
         }
       },
       'ip-allow': {
@@ -1723,6 +2077,13 @@ const adminTemplate = `<!doctype html>
         cardId: 'feature-ip-block',
         reset: function () {
           document.getElementById('policy-ip-block-list').value = ''
+        }
+      },
+      'circuit-breaker': {
+        cardId: 'feature-circuit-breaker',
+        reset: function () {
+          document.getElementById('policy-circuit-breaker-failures').value = ''
+          document.getElementById('policy-circuit-breaker-reset-seconds').value = ''
         }
       }
     }
@@ -1794,14 +2155,34 @@ const adminTemplate = `<!doctype html>
       document.getElementById('policy-action').value = 'update_policy'
       document.getElementById('policy-index').value = data.policyIndex
       document.getElementById('policy-name').value = data.policyName
+      document.getElementById('policy-request-timeout-seconds').value = data.policyRequestTimeoutSeconds
+      document.getElementById('policy-retry-count').value = data.policyRetryCount
       document.getElementById('policy-require-api-key').value = data.policyRequireApiKey
       document.getElementById('policy-api-keys').value = data.policyApiKeys
+      document.getElementById('policy-basic-auth-username').value = data.policyBasicAuthUsername
+      document.getElementById('policy-basic-auth-password').value = data.policyBasicAuthPassword
       document.getElementById('policy-rate-limit-requests').value = data.policyRateLimitRequests
       document.getElementById('policy-rate-limit-window-seconds').value = data.policyRateLimitWindowSeconds
+      document.getElementById('policy-allowed-methods').value = data.policyAllowedMethods
+      document.getElementById('policy-rewrite-path-prefix').value = data.policyRewritePathPrefix
+      document.getElementById('policy-add-request-headers').value = data.policyAddRequestHeaders
+      document.getElementById('policy-remove-request-headers').value = data.policyRemoveRequestHeaders
       document.getElementById('policy-max-payload-bytes').value = data.policyMaxPayloadBytes
+      document.getElementById('policy-request-transform-find').value = data.policyRequestTransformFind
+      document.getElementById('policy-request-transform-replace').value = data.policyRequestTransformReplace
       document.getElementById('policy-cache-ttl-seconds').value = data.policyCacheTtlSeconds
+      document.getElementById('policy-add-response-headers').value = data.policyAddResponseHeaders
+      document.getElementById('policy-remove-response-headers').value = data.policyRemoveResponseHeaders
+      document.getElementById('policy-response-transform-find').value = data.policyResponseTransformFind
+      document.getElementById('policy-response-transform-replace').value = data.policyResponseTransformReplace
+      document.getElementById('policy-max-response-bytes').value = data.policyMaxResponseBytes
+      document.getElementById('policy-cors-allow-origins').value = data.policyCorsAllowOrigins
+      document.getElementById('policy-cors-allow-methods').value = data.policyCorsAllowMethods
+      document.getElementById('policy-cors-allow-headers').value = data.policyCorsAllowHeaders
       document.getElementById('policy-ip-allow-list').value = data.policyIpAllowList
       document.getElementById('policy-ip-block-list').value = data.policyIpBlockList
+      document.getElementById('policy-circuit-breaker-failures').value = data.policyCircuitBreakerFailures
+      document.getElementById('policy-circuit-breaker-reset-seconds').value = data.policyCircuitBreakerResetSeconds
       syncPolicyFeaturesFromValues()
       document.getElementById('policy-modal').classList.remove('hidden')
     }
@@ -1848,33 +2229,85 @@ const adminTemplate = `<!doctype html>
 
     function syncPolicyFeaturesFromValues() {
       var values = {
+        requestTimeoutSeconds: document.getElementById('policy-request-timeout-seconds').value,
+        retryCount: document.getElementById('policy-retry-count').value,
         requireApiKey: document.getElementById('policy-require-api-key').value,
         apiKeys: document.getElementById('policy-api-keys').value,
+        basicAuthUsername: document.getElementById('policy-basic-auth-username').value,
+        basicAuthPassword: document.getElementById('policy-basic-auth-password').value,
         rateLimitRequests: document.getElementById('policy-rate-limit-requests').value,
         rateLimitWindowSeconds: document.getElementById('policy-rate-limit-window-seconds').value,
+        allowedMethods: document.getElementById('policy-allowed-methods').value,
+        rewritePathPrefix: document.getElementById('policy-rewrite-path-prefix').value,
+        addRequestHeaders: document.getElementById('policy-add-request-headers').value,
+        removeRequestHeaders: document.getElementById('policy-remove-request-headers').value,
         maxPayloadBytes: document.getElementById('policy-max-payload-bytes').value,
+        requestTransformFind: document.getElementById('policy-request-transform-find').value,
+        requestTransformReplace: document.getElementById('policy-request-transform-replace').value,
         cacheTTLSeconds: document.getElementById('policy-cache-ttl-seconds').value,
+        addResponseHeaders: document.getElementById('policy-add-response-headers').value,
+        removeResponseHeaders: document.getElementById('policy-remove-response-headers').value,
+        responseTransformFind: document.getElementById('policy-response-transform-find').value,
+        responseTransformReplace: document.getElementById('policy-response-transform-replace').value,
+        maxResponseBytes: document.getElementById('policy-max-response-bytes').value,
+        corsAllowOrigins: document.getElementById('policy-cors-allow-origins').value,
+        corsAllowMethods: document.getElementById('policy-cors-allow-methods').value,
+        corsAllowHeaders: document.getElementById('policy-cors-allow-headers').value,
         ipAllowList: document.getElementById('policy-ip-allow-list').value,
-        ipBlockList: document.getElementById('policy-ip-block-list').value
+        ipBlockList: document.getElementById('policy-ip-block-list').value,
+        circuitBreakerFailures: document.getElementById('policy-circuit-breaker-failures').value,
+        circuitBreakerResetSeconds: document.getElementById('policy-circuit-breaker-reset-seconds').value
       }
 
       hidePolicyFeatures()
 
+      document.getElementById('policy-request-timeout-seconds').value = values.requestTimeoutSeconds
+      document.getElementById('policy-retry-count').value = values.retryCount
       document.getElementById('policy-require-api-key').value = values.requireApiKey
       document.getElementById('policy-api-keys').value = values.apiKeys
+      document.getElementById('policy-basic-auth-username').value = values.basicAuthUsername
+      document.getElementById('policy-basic-auth-password').value = values.basicAuthPassword
       document.getElementById('policy-rate-limit-requests').value = values.rateLimitRequests
       document.getElementById('policy-rate-limit-window-seconds').value = values.rateLimitWindowSeconds
+      document.getElementById('policy-allowed-methods').value = values.allowedMethods
+      document.getElementById('policy-rewrite-path-prefix').value = values.rewritePathPrefix
+      document.getElementById('policy-add-request-headers').value = values.addRequestHeaders
+      document.getElementById('policy-remove-request-headers').value = values.removeRequestHeaders
       document.getElementById('policy-max-payload-bytes').value = values.maxPayloadBytes
+      document.getElementById('policy-request-transform-find').value = values.requestTransformFind
+      document.getElementById('policy-request-transform-replace').value = values.requestTransformReplace
       document.getElementById('policy-cache-ttl-seconds').value = values.cacheTTLSeconds
+      document.getElementById('policy-add-response-headers').value = values.addResponseHeaders
+      document.getElementById('policy-remove-response-headers').value = values.removeResponseHeaders
+      document.getElementById('policy-response-transform-find').value = values.responseTransformFind
+      document.getElementById('policy-response-transform-replace').value = values.responseTransformReplace
+      document.getElementById('policy-max-response-bytes').value = values.maxResponseBytes
+      document.getElementById('policy-cors-allow-origins').value = values.corsAllowOrigins
+      document.getElementById('policy-cors-allow-methods').value = values.corsAllowMethods
+      document.getElementById('policy-cors-allow-headers').value = values.corsAllowHeaders
       document.getElementById('policy-ip-allow-list').value = values.ipAllowList
       document.getElementById('policy-ip-block-list').value = values.ipBlockList
+      document.getElementById('policy-circuit-breaker-failures').value = values.circuitBreakerFailures
+      document.getElementById('policy-circuit-breaker-reset-seconds').value = values.circuitBreakerResetSeconds
 
+      if (featureValueIsEnabled('policy-request-timeout-seconds')) addPolicyFeature('timeout')
+      if (featureValueIsEnabled('policy-retry-count')) addPolicyFeature('retry')
       if (document.getElementById('policy-require-api-key').value === 'true' || document.getElementById('policy-api-keys').value.trim() !== '') addPolicyFeature('api-key')
+      if (document.getElementById('policy-basic-auth-username').value.trim() !== '' || document.getElementById('policy-basic-auth-password').value.trim() !== '') addPolicyFeature('basic-auth')
       if (featureValueIsEnabled('policy-rate-limit-requests') || featureValueIsEnabled('policy-rate-limit-window-seconds')) addPolicyFeature('rate-limit')
+      if (document.getElementById('policy-allowed-methods').value.trim() !== '') addPolicyFeature('methods')
+      if (document.getElementById('policy-rewrite-path-prefix').value.trim() !== '') addPolicyFeature('rewrite')
+      if (document.getElementById('policy-add-request-headers').value.trim() !== '' || document.getElementById('policy-remove-request-headers').value.trim() !== '') addPolicyFeature('request-headers')
       if (featureValueIsEnabled('policy-max-payload-bytes')) addPolicyFeature('payload-limit')
+      if (document.getElementById('policy-request-transform-find').value.trim() !== '' || document.getElementById('policy-request-transform-replace').value.trim() !== '') addPolicyFeature('request-transform')
       if (featureValueIsEnabled('policy-cache-ttl-seconds')) addPolicyFeature('cache')
+      if (document.getElementById('policy-add-response-headers').value.trim() !== '' || document.getElementById('policy-remove-response-headers').value.trim() !== '') addPolicyFeature('response-headers')
+      if (document.getElementById('policy-response-transform-find').value.trim() !== '' || document.getElementById('policy-response-transform-replace').value.trim() !== '') addPolicyFeature('response-transform')
+      if (featureValueIsEnabled('policy-max-response-bytes')) addPolicyFeature('response-limit')
+      if (document.getElementById('policy-cors-allow-origins').value.trim() !== '' || document.getElementById('policy-cors-allow-methods').value.trim() !== '' || document.getElementById('policy-cors-allow-headers').value.trim() !== '') addPolicyFeature('cors')
       if (document.getElementById('policy-ip-allow-list').value.trim() !== '') addPolicyFeature('ip-allow')
       if (document.getElementById('policy-ip-block-list').value.trim() !== '') addPolicyFeature('ip-block')
+      if (featureValueIsEnabled('policy-circuit-breaker-failures') || featureValueIsEnabled('policy-circuit-breaker-reset-seconds')) addPolicyFeature('circuit-breaker')
     }
 
     function featureValueIsEnabled(id) {

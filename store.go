@@ -22,14 +22,34 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS policies (
 	id                       INTEGER PRIMARY KEY AUTOINCREMENT,
 	name                     TEXT NOT NULL UNIQUE,
+	request_timeout_seconds  INTEGER NOT NULL DEFAULT 0,
+	retry_count              INTEGER NOT NULL DEFAULT 0,
 	require_api_key          INTEGER NOT NULL DEFAULT 0,
 	api_keys                 TEXT NOT NULL DEFAULT '',
+	basic_auth_username      TEXT NOT NULL DEFAULT '',
+	basic_auth_password      TEXT NOT NULL DEFAULT '',
 	rate_limit_requests      INTEGER NOT NULL DEFAULT 0,
 	rate_limit_window_seconds INTEGER NOT NULL DEFAULT 0,
+	allowed_methods          TEXT NOT NULL DEFAULT '',
+	rewrite_path_prefix      TEXT NOT NULL DEFAULT '',
+	add_request_headers      TEXT NOT NULL DEFAULT '',
+	remove_request_headers   TEXT NOT NULL DEFAULT '',
 	max_payload_bytes        INTEGER NOT NULL DEFAULT 0,
+	request_transform_find   TEXT NOT NULL DEFAULT '',
+	request_transform_replace TEXT NOT NULL DEFAULT '',
 	cache_ttl_seconds        INTEGER NOT NULL DEFAULT 0,
+	add_response_headers     TEXT NOT NULL DEFAULT '',
+	remove_response_headers  TEXT NOT NULL DEFAULT '',
+	response_transform_find  TEXT NOT NULL DEFAULT '',
+	response_transform_replace TEXT NOT NULL DEFAULT '',
+	max_response_bytes       INTEGER NOT NULL DEFAULT 0,
+	cors_allow_origins       TEXT NOT NULL DEFAULT '',
+	cors_allow_methods       TEXT NOT NULL DEFAULT '',
+	cors_allow_headers       TEXT NOT NULL DEFAULT '',
 	ip_allow_list            TEXT NOT NULL DEFAULT '',
 	ip_block_list            TEXT NOT NULL DEFAULT '',
+	circuit_breaker_failures INTEGER NOT NULL DEFAULT 0,
+	circuit_breaker_reset_seconds INTEGER NOT NULL DEFAULT 0,
 	position                 INTEGER NOT NULL DEFAULT 0
 );
 
@@ -87,8 +107,33 @@ func openStore(dbPath string) (*Store, error) {
 }
 
 func runMigrations(db *sql.DB) error {
-	if _, err := db.Exec("ALTER TABLE routes ADD COLUMN policy_name TEXT NOT NULL DEFAULT ''"); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		return err
+	columns := []string{
+		"ALTER TABLE routes ADD COLUMN policy_name TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN request_timeout_seconds INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN basic_auth_username TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN basic_auth_password TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN allowed_methods TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN rewrite_path_prefix TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN add_request_headers TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN remove_request_headers TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN request_transform_find TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN request_transform_replace TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN add_response_headers TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN remove_response_headers TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN response_transform_find TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN response_transform_replace TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN max_response_bytes INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN cors_allow_origins TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN cors_allow_methods TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN cors_allow_headers TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN circuit_breaker_failures INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN circuit_breaker_reset_seconds INTEGER NOT NULL DEFAULT 0",
+	}
+	for _, stmt := range columns {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
 	}
 	return nil
 }
@@ -406,7 +451,7 @@ func (s *Store) HasSettings() bool {
 
 func (s *Store) ListPolicies() ([]Policy, error) {
 	rows, err := s.db.Query(`
-		SELECT name, require_api_key, api_keys, rate_limit_requests, rate_limit_window_seconds, max_payload_bytes, cache_ttl_seconds, ip_allow_list, ip_block_list
+		SELECT name, request_timeout_seconds, retry_count, require_api_key, api_keys, basic_auth_username, basic_auth_password, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds
 		FROM policies
 		ORDER BY position, id
 	`)
@@ -420,23 +465,59 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 		var policy Policy
 		var requireAPIKey int
 		var apiKeys string
+		var allowedMethods string
+		var addRequestHeaders string
+		var removeRequestHeaders string
+		var addResponseHeaders string
+		var removeResponseHeaders string
+		var corsAllowOrigins string
+		var corsAllowMethods string
+		var corsAllowHeaders string
 		var allowList string
 		var blockList string
 		if err := rows.Scan(
 			&policy.Name,
+			&policy.RequestTimeoutSeconds,
+			&policy.RetryCount,
 			&requireAPIKey,
 			&apiKeys,
+			&policy.BasicAuthUsername,
+			&policy.BasicAuthPassword,
 			&policy.RateLimitRequests,
 			&policy.RateLimitWindowSeconds,
+			&allowedMethods,
+			&policy.RewritePathPrefix,
+			&addRequestHeaders,
+			&removeRequestHeaders,
 			&policy.MaxPayloadBytes,
+			&policy.RequestTransformFind,
+			&policy.RequestTransformReplace,
 			&policy.CacheTTLSeconds,
+			&addResponseHeaders,
+			&removeResponseHeaders,
+			&policy.ResponseTransformFind,
+			&policy.ResponseTransformReplace,
+			&policy.MaxResponseBytes,
+			&corsAllowOrigins,
+			&corsAllowMethods,
+			&corsAllowHeaders,
 			&allowList,
 			&blockList,
+			&policy.CircuitBreakerFailures,
+			&policy.CircuitBreakerResetSeconds,
 		); err != nil {
 			return nil, err
 		}
 		policy.RequireAPIKey = requireAPIKey == 1
 		policy.APIKeys = splitLines(apiKeys)
+		policy.AllowedMethods = splitLines(allowedMethods)
+		policy.AddRequestHeaders = splitLines(addRequestHeaders)
+		policy.RemoveRequestHeaders = splitLines(removeRequestHeaders)
+		policy.AddResponseHeaders = splitLines(addResponseHeaders)
+		policy.RemoveResponseHeaders = splitLines(removeResponseHeaders)
+		policy.CORSAllowOrigins = splitLines(corsAllowOrigins)
+		policy.CORSAllowMethods = splitLines(corsAllowMethods)
+		policy.CORSAllowHeaders = splitLines(corsAllowHeaders)
 		policy.IPAllowList = splitLines(allowList)
 		policy.IPBlockList = splitLines(blockList)
 		policies = append(policies, policy)
@@ -470,17 +551,37 @@ func (s *Store) AddPolicy(policy Policy) error {
 	}
 
 	_, err = tx.Exec(
-		`INSERT INTO policies (name, require_api_key, api_keys, rate_limit_requests, rate_limit_window_seconds, max_payload_bytes, cache_ttl_seconds, ip_allow_list, ip_block_list, position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, api_keys, basic_auth_username, basic_auth_password, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		policy.Name,
+		policy.RequestTimeoutSeconds,
+		policy.RetryCount,
 		requireAPIKey,
 		joinLines(policy.APIKeys),
+		policy.BasicAuthUsername,
+		policy.BasicAuthPassword,
 		policy.RateLimitRequests,
 		policy.RateLimitWindowSeconds,
+		joinLines(policy.AllowedMethods),
+		policy.RewritePathPrefix,
+		joinLines(policy.AddRequestHeaders),
+		joinLines(policy.RemoveRequestHeaders),
 		policy.MaxPayloadBytes,
+		policy.RequestTransformFind,
+		policy.RequestTransformReplace,
 		policy.CacheTTLSeconds,
+		joinLines(policy.AddResponseHeaders),
+		joinLines(policy.RemoveResponseHeaders),
+		policy.ResponseTransformFind,
+		policy.ResponseTransformReplace,
+		policy.MaxResponseBytes,
+		joinLines(policy.CORSAllowOrigins),
+		joinLines(policy.CORSAllowMethods),
+		joinLines(policy.CORSAllowHeaders),
 		joinLines(policy.IPAllowList),
 		joinLines(policy.IPBlockList),
+		policy.CircuitBreakerFailures,
+		policy.CircuitBreakerResetSeconds,
 		maxPos+1,
 	)
 	if err != nil {
@@ -502,16 +603,36 @@ func (s *Store) UpdatePolicy(index int, policy Policy) error {
 	}
 
 	_, err = s.db.Exec(
-		`UPDATE policies SET name = ?, require_api_key = ?, api_keys = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, max_payload_bytes = ?, cache_ttl_seconds = ?, ip_allow_list = ?, ip_block_list = ? WHERE id = ?`,
+		`UPDATE policies SET name = ?, request_timeout_seconds = ?, retry_count = ?, require_api_key = ?, api_keys = ?, basic_auth_username = ?, basic_auth_password = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, allowed_methods = ?, rewrite_path_prefix = ?, add_request_headers = ?, remove_request_headers = ?, max_payload_bytes = ?, request_transform_find = ?, request_transform_replace = ?, cache_ttl_seconds = ?, add_response_headers = ?, remove_response_headers = ?, response_transform_find = ?, response_transform_replace = ?, max_response_bytes = ?, cors_allow_origins = ?, cors_allow_methods = ?, cors_allow_headers = ?, ip_allow_list = ?, ip_block_list = ?, circuit_breaker_failures = ?, circuit_breaker_reset_seconds = ? WHERE id = ?`,
 		policy.Name,
+		policy.RequestTimeoutSeconds,
+		policy.RetryCount,
 		requireAPIKey,
 		joinLines(policy.APIKeys),
+		policy.BasicAuthUsername,
+		policy.BasicAuthPassword,
 		policy.RateLimitRequests,
 		policy.RateLimitWindowSeconds,
+		joinLines(policy.AllowedMethods),
+		policy.RewritePathPrefix,
+		joinLines(policy.AddRequestHeaders),
+		joinLines(policy.RemoveRequestHeaders),
 		policy.MaxPayloadBytes,
+		policy.RequestTransformFind,
+		policy.RequestTransformReplace,
 		policy.CacheTTLSeconds,
+		joinLines(policy.AddResponseHeaders),
+		joinLines(policy.RemoveResponseHeaders),
+		policy.ResponseTransformFind,
+		policy.ResponseTransformReplace,
+		policy.MaxResponseBytes,
+		joinLines(policy.CORSAllowOrigins),
+		joinLines(policy.CORSAllowMethods),
+		joinLines(policy.CORSAllowHeaders),
 		joinLines(policy.IPAllowList),
 		joinLines(policy.IPBlockList),
+		policy.CircuitBreakerFailures,
+		policy.CircuitBreakerResetSeconds,
 		id,
 	)
 	return err

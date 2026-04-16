@@ -2,35 +2,65 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/textproto"
 	"strings"
 	"sync"
 	"time"
 )
 
 type Policy struct {
-	Name                   string
-	RequireAPIKey          bool
-	APIKeys                []string
-	RateLimitRequests      int
-	RateLimitWindowSeconds int
-	MaxPayloadBytes        int64
-	CacheTTLSeconds        int
-	IPAllowList            []string
-	IPBlockList            []string
+	Name                       string
+	RequestTimeoutSeconds      int
+	RetryCount                 int
+	RequireAPIKey              bool
+	APIKeys                    []string
+	BasicAuthUsername          string
+	BasicAuthPassword          string
+	RateLimitRequests          int
+	RateLimitWindowSeconds     int
+	AllowedMethods             []string
+	RewritePathPrefix          string
+	AddRequestHeaders          []string
+	RemoveRequestHeaders       []string
+	MaxPayloadBytes            int64
+	RequestTransformFind       string
+	RequestTransformReplace    string
+	CacheTTLSeconds            int
+	AddResponseHeaders         []string
+	RemoveResponseHeaders      []string
+	ResponseTransformFind      string
+	ResponseTransformReplace   string
+	MaxResponseBytes           int64
+	CORSAllowOrigins           []string
+	CORSAllowMethods           []string
+	CORSAllowHeaders           []string
+	IPAllowList                []string
+	IPBlockList                []string
+	CircuitBreakerFailures     int
+	CircuitBreakerResetSeconds int
 }
 
 type compiledPolicy struct {
 	Policy
-	apiKeys     map[string]struct{}
-	ipAllowList []netip.Prefix
-	ipBlockList []netip.Prefix
-	rateLimiter *rateLimiter
-	cache       *responseCache
+	apiKeys               map[string]struct{}
+	allowedMethods        map[string]struct{}
+	addRequestHeaders     map[string]string
+	removeRequestHeaders  map[string]struct{}
+	addResponseHeaders    map[string]string
+	removeResponseHeaders map[string]struct{}
+	requestTimeout        time.Duration
+	ipAllowList           []netip.Prefix
+	ipBlockList           []netip.Prefix
+	rateLimiter           *rateLimiter
+	cache                 *responseCache
+	circuitBreaker        *circuitBreaker
 }
 
 type rateLimiter struct {
@@ -59,6 +89,19 @@ type cacheRecorder struct {
 	status int
 }
 
+type retryTransport struct {
+	base    http.RoundTripper
+	retries int
+}
+
+type circuitBreaker struct {
+	mu          sync.Mutex
+	threshold   int
+	resetWindow time.Duration
+	failures    int
+	openUntil   time.Time
+}
+
 func compilePolicy(policy Policy) (*compiledPolicy, error) {
 	compiled := &compiledPolicy{
 		Policy:  policy,
@@ -69,6 +112,18 @@ func compilePolicy(policy Policy) (*compiledPolicy, error) {
 			compiled.apiKeys[key] = struct{}{}
 		}
 	}
+	compiled.allowedMethods = make(map[string]struct{}, len(policy.AllowedMethods))
+	for _, method := range policy.AllowedMethods {
+		if method != "" {
+			compiled.allowedMethods[strings.ToUpper(method)] = struct{}{}
+		}
+	}
+
+	compiled.addRequestHeaders = parseHeaderMap(policy.AddRequestHeaders)
+	compiled.removeRequestHeaders = parseHeaderSet(policy.RemoveRequestHeaders)
+	compiled.addResponseHeaders = parseHeaderMap(policy.AddResponseHeaders)
+	compiled.removeResponseHeaders = parseHeaderSet(policy.RemoveResponseHeaders)
+	compiled.requestTimeout = time.Duration(policy.RequestTimeoutSeconds) * time.Second
 
 	allowList, err := parsePrefixes(policy.IPAllowList)
 	if err != nil {
@@ -96,7 +151,43 @@ func compilePolicy(policy Policy) (*compiledPolicy, error) {
 		}
 	}
 
+	if policy.CircuitBreakerFailures > 0 && policy.CircuitBreakerResetSeconds > 0 {
+		compiled.circuitBreaker = &circuitBreaker{
+			threshold:   policy.CircuitBreakerFailures,
+			resetWindow: time.Duration(policy.CircuitBreakerResetSeconds) * time.Second,
+		}
+	}
+
 	return compiled, nil
+}
+
+func parseHeaderMap(values []string) map[string]string {
+	parsed := map[string]string{}
+	for _, value := range values {
+		parts := strings.SplitN(value, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		name := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(parts[0]))
+		body := strings.TrimSpace(parts[1])
+		if name == "" {
+			continue
+		}
+		parsed[name] = body
+	}
+	return parsed
+}
+
+func parseHeaderSet(values []string) map[string]struct{} {
+	parsed := map[string]struct{}{}
+	for _, value := range values {
+		name := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(value))
+		if name == "" {
+			continue
+		}
+		parsed[name] = struct{}{}
+	}
+	return parsed
 }
 
 func parsePrefixes(values []string) ([]netip.Prefix, error) {
@@ -160,6 +251,22 @@ func requestAPIKey(r *http.Request) string {
 	return ""
 }
 
+func requestBasicAuth(r *http.Request) (string, string, bool) {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Basic ") {
+		return "", "", false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
 func shouldReadBody(method string) bool {
 	switch method {
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
@@ -176,6 +283,16 @@ func shouldCacheRouteResponse(route compiledRoute, r *http.Request) bool {
 func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request) (bool, int, string) {
 	if route.policy == nil {
 		return true, http.StatusOK, ""
+	}
+
+	if route.policy.circuitBreaker != nil && !route.policy.circuitBreaker.Allow(time.Now()) {
+		return false, http.StatusServiceUnavailable, "circuit open"
+	}
+
+	if len(route.policy.allowedMethods) > 0 {
+		if _, ok := route.policy.allowedMethods[r.Method]; !ok {
+			return false, http.StatusMethodNotAllowed, "method not allowed"
+		}
 	}
 
 	ip, err := remoteIP(r.RemoteAddr)
@@ -211,8 +328,20 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request) (bool, i
 		return false, http.StatusUnauthorized, "unauthorized"
 	}
 
+	if route.policy.BasicAuthUsername != "" || route.policy.BasicAuthPassword != "" {
+		username, password, ok := requestBasicAuth(r)
+		if !ok || username != route.policy.BasicAuthUsername || password != route.policy.BasicAuthPassword {
+			return false, http.StatusUnauthorized, "unauthorized"
+		}
+	}
+
 	if route.policy.rateLimiter != nil && !route.policy.rateLimiter.Allow(ip.String(), time.Now()) {
 		return false, http.StatusTooManyRequests, "rate limit exceeded"
+	}
+
+	applyRequestHeaders(route.policy, r)
+	if err := applyRequestTransform(route.policy, r); err != nil {
+		return false, http.StatusBadRequest, "bad request"
 	}
 
 	return true, http.StatusOK, ""
@@ -232,6 +361,29 @@ func (g *Gateway) cachedPolicyResponse(route compiledRoute, r *http.Request) (ca
 		return cachedResponse{}, false
 	}
 	return route.policy.cache.Get(cacheKey(r), time.Now())
+}
+
+func applyRequestHeaders(policy *compiledPolicy, r *http.Request) {
+	for key := range policy.removeRequestHeaders {
+		r.Header.Del(key)
+	}
+	for key, value := range policy.addRequestHeaders {
+		r.Header.Set(key, value)
+	}
+}
+
+func applyRequestTransform(policy *compiledPolicy, r *http.Request) error {
+	if policy.RequestTransformFind == "" || shouldReadBody(r.Method) == false {
+		return nil
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	transformed := strings.ReplaceAll(string(body), policy.RequestTransformFind, policy.RequestTransformReplace)
+	r.Body = io.NopCloser(strings.NewReader(transformed))
+	r.ContentLength = int64(len(transformed))
+	return nil
 }
 
 func (g *Gateway) storeCachedPolicyResponse(route compiledRoute, r *http.Request, recorder *cacheRecorder) {
@@ -259,6 +411,46 @@ func (r *rateLimiter) Allow(key string, now time.Time) bool {
 	}
 	r.entries[key] = append(kept, now)
 	return true
+}
+
+func (c *circuitBreaker) Allow(now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !now.Before(c.openUntil)
+}
+
+func (c *circuitBreaker) RecordSuccess() {
+	c.mu.Lock()
+	c.failures = 0
+	c.openUntil = time.Time{}
+	c.mu.Unlock()
+}
+
+func (c *circuitBreaker) RecordFailure(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failures++
+	if c.failures >= c.threshold {
+		c.openUntil = now.Add(c.resetWindow)
+		c.failures = 0
+	}
+}
+
+func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt <= t.retries; attempt++ {
+		clone := req.Clone(req.Context())
+		resp, err = base.RoundTrip(clone)
+		if err == nil {
+			return resp, nil
+		}
+	}
+	return nil, err
 }
 
 func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
@@ -333,6 +525,90 @@ func cloneHeader(header http.Header) http.Header {
 	return cloned
 }
 
+func applyResponsePolicy(policy *compiledPolicy, resp *http.Response) error {
+	if policy == nil {
+		return nil
+	}
+
+	for key := range policy.removeResponseHeaders {
+		resp.Header.Del(key)
+	}
+	for key, value := range policy.addResponseHeaders {
+		resp.Header.Set(key, value)
+	}
+
+	if len(policy.CORSAllowOrigins) > 0 {
+		origin := "*"
+		if len(policy.CORSAllowOrigins) == 1 {
+			origin = policy.CORSAllowOrigins[0]
+		}
+		resp.Header.Set("Access-Control-Allow-Origin", origin)
+		if len(policy.CORSAllowMethods) > 0 {
+			resp.Header.Set("Access-Control-Allow-Methods", strings.Join(policy.CORSAllowMethods, ", "))
+		}
+		if len(policy.CORSAllowHeaders) > 0 {
+			resp.Header.Set("Access-Control-Allow-Headers", strings.Join(policy.CORSAllowHeaders, ", "))
+		}
+	}
+
+	needsBody := policy.MaxResponseBytes > 0 || policy.ResponseTransformFind != ""
+	if !needsBody || resp.Body == nil {
+		return nil
+	}
+
+	limit := int64(0)
+	if policy.MaxResponseBytes > 0 {
+		limit = policy.MaxResponseBytes + 1
+	} else {
+		limit = 10 << 20
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	if policy.MaxResponseBytes > 0 && int64(len(body)) > policy.MaxResponseBytes {
+		return fmt.Errorf("response too large")
+	}
+	if policy.ResponseTransformFind != "" {
+		body = []byte(strings.ReplaceAll(string(body), policy.ResponseTransformFind, policy.ResponseTransformReplace))
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	return nil
+}
+
+func applyCORSPreflight(policy *compiledPolicy, w http.ResponseWriter, r *http.Request) bool {
+	if policy == nil || len(policy.CORSAllowOrigins) == 0 {
+		return false
+	}
+	if r.Method != http.MethodOptions || r.Header.Get("Origin") == "" {
+		return false
+	}
+	origin := "*"
+	if len(policy.CORSAllowOrigins) == 1 {
+		origin = policy.CORSAllowOrigins[0]
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	if len(policy.CORSAllowMethods) > 0 {
+		w.Header().Set("Access-Control-Allow-Methods", strings.Join(policy.CORSAllowMethods, ", "))
+	}
+	if len(policy.CORSAllowHeaders) > 0 {
+		w.Header().Set("Access-Control-Allow-Headers", strings.Join(policy.CORSAllowHeaders, ", "))
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return true
+}
+
+func requestWithPolicyContext(r *http.Request, policy *compiledPolicy) *http.Request {
+	if policy == nil || policy.requestTimeout <= 0 {
+		return r
+	}
+	ctx, _ := context.WithTimeout(r.Context(), policy.requestTimeout)
+	return r.WithContext(ctx)
+}
+
 func routePolicyLabel(route Route) string {
 	if route.PolicyName != "" {
 		return route.PolicyName
@@ -344,21 +620,57 @@ func routePolicyLabel(route Route) string {
 }
 
 func policySummary(policy Policy) string {
-	parts := make([]string, 0, 5)
+	parts := make([]string, 0, 12)
+	if policy.RequestTimeoutSeconds > 0 {
+		parts = append(parts, fmt.Sprintf("timeout %ds", policy.RequestTimeoutSeconds))
+	}
+	if policy.RetryCount > 0 {
+		parts = append(parts, fmt.Sprintf("retry %d", policy.RetryCount))
+	}
 	if policy.RequireAPIKey {
 		parts = append(parts, "api key")
+	}
+	if policy.BasicAuthUsername != "" || policy.BasicAuthPassword != "" {
+		parts = append(parts, "basic auth")
 	}
 	if policy.RateLimitRequests > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%ds", policy.RateLimitRequests, policy.RateLimitWindowSeconds))
 	}
+	if len(policy.AllowedMethods) > 0 {
+		parts = append(parts, "methods")
+	}
+	if policy.RewritePathPrefix != "" {
+		parts = append(parts, "rewrite")
+	}
+	if len(policy.AddRequestHeaders) > 0 || len(policy.RemoveRequestHeaders) > 0 {
+		parts = append(parts, "request headers")
+	}
 	if policy.MaxPayloadBytes > 0 {
 		parts = append(parts, fmt.Sprintf("payload %d", policy.MaxPayloadBytes))
+	}
+	if policy.RequestTransformFind != "" {
+		parts = append(parts, "request transform")
 	}
 	if policy.CacheTTLSeconds > 0 {
 		parts = append(parts, fmt.Sprintf("cache %ds", policy.CacheTTLSeconds))
 	}
+	if len(policy.AddResponseHeaders) > 0 || len(policy.RemoveResponseHeaders) > 0 {
+		parts = append(parts, "response headers")
+	}
+	if policy.ResponseTransformFind != "" {
+		parts = append(parts, "response transform")
+	}
+	if policy.MaxResponseBytes > 0 {
+		parts = append(parts, fmt.Sprintf("response %d", policy.MaxResponseBytes))
+	}
+	if len(policy.CORSAllowOrigins) > 0 {
+		parts = append(parts, "cors")
+	}
 	if len(policy.IPAllowList) > 0 || len(policy.IPBlockList) > 0 {
 		parts = append(parts, "ip rules")
+	}
+	if policy.CircuitBreakerFailures > 0 {
+		parts = append(parts, "circuit breaker")
 	}
 	if len(parts) == 0 {
 		return "basic"
