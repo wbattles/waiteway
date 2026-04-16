@@ -236,6 +236,8 @@ func remoteIP(remoteAddr string) (netip.Addr, error) {
 	if err != nil {
 		host = remoteAddr
 	}
+	host = strings.TrimSpace(host)
+	host = strings.Trim(host, "[]")
 	return netip.ParseAddr(host)
 }
 
@@ -443,11 +445,36 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	var resp *http.Response
 	var err error
+	// Prepare a getBody helper so we can replay the request body for retries.
+	var getBody func() (io.ReadCloser, error)
+	if req.GetBody != nil {
+		getBody = func() (io.ReadCloser, error) { return req.GetBody() }
+	} else if req.Body != nil {
+		bodyBytes, readErr := io.ReadAll(req.Body)
+		if readErr != nil {
+			return nil, readErr
+		}
+		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		getBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(bodyBytes)), nil }
+	} else {
+		getBody = func() (io.ReadCloser, error) { return nil, nil }
+	}
+
 	for attempt := 0; attempt <= t.retries; attempt++ {
 		clone := req.Clone(req.Context())
+		if clone.Body == nil {
+			if b, gerr := getBody(); gerr != nil {
+				return nil, gerr
+			} else if b != nil {
+				clone.Body = b
+			}
+		}
 		resp, err = base.RoundTrip(clone)
 		if err == nil {
 			return resp, nil
+		}
+		if clone.Body != nil {
+			_ = clone.Body.Close()
 		}
 	}
 	return nil, err
@@ -601,12 +628,12 @@ func applyCORSPreflight(policy *compiledPolicy, w http.ResponseWriter, r *http.R
 	return true
 }
 
-func requestWithPolicyContext(r *http.Request, policy *compiledPolicy) *http.Request {
+func requestWithPolicyContext(r *http.Request, policy *compiledPolicy) (*http.Request, context.CancelFunc) {
 	if policy == nil || policy.requestTimeout <= 0 {
-		return r
+		return r, func() {}
 	}
-	ctx, _ := context.WithTimeout(r.Context(), policy.requestTimeout)
-	return r.WithContext(ctx)
+	ctx, cancel := context.WithTimeout(r.Context(), policy.requestTimeout)
+	return r.WithContext(ctx), cancel
 }
 
 func routePolicyLabel(route Route) string {
