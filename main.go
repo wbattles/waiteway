@@ -22,6 +22,7 @@ import (
 type Config struct {
 	Admin    AdminConfig
 	LogLimit int
+	Policies []Policy
 	Routes   []Route
 }
 
@@ -34,6 +35,7 @@ type Route struct {
 	Name          string
 	PathPrefix    string
 	Target        string
+	PolicyName    string
 	RequireAPIKey bool
 	StripPrefix   bool
 	APIKeys       []string
@@ -43,6 +45,7 @@ type Gateway struct {
 	mu        sync.RWMutex
 	store     *Store
 	config    Config
+	policies  map[string]*compiledPolicy
 	routes    []compiledRoute
 	apiKeys   map[string]struct{}
 	tmpl      *template.Template
@@ -55,6 +58,7 @@ type compiledRoute struct {
 	targetURL *url.URL
 	proxy     *httputil.ReverseProxy
 	apiKeys   map[string]struct{}
+	policy    *compiledPolicy
 }
 
 type requestLog struct {
@@ -76,6 +80,7 @@ type adminPageData struct {
 	AdminUsername   string
 	AdminPassword   string
 	LogLimit        int
+	Policies        []Policy
 	Routes          []Route
 	OpenRoutes      int
 	ProtectedRoutes int
@@ -183,6 +188,8 @@ func seedFromEnv(store *Store) {
 func newGateway(store *Store, config Config) (*Gateway, error) {
 	tmpl, err := template.New("admin").Funcs(template.FuncMap{
 		"formatDurationMS": formatDurationMS,
+		"routePolicyLabel": routePolicyLabel,
+		"policySummary":    policySummary,
 	}).Parse(adminTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("parse admin template: %w", err)
@@ -208,7 +215,7 @@ func newGateway(store *Store, config Config) (*Gateway, error) {
 }
 
 func (g *Gateway) applyConfig(config Config) error {
-	routes, apiKeys, err := compileConfig(config)
+	routes, policies, apiKeys, err := compileConfig(config)
 	if err != nil {
 		return err
 	}
@@ -217,23 +224,33 @@ func (g *Gateway) applyConfig(config Config) error {
 	defer g.mu.Unlock()
 
 	g.config = config
+	g.policies = policies
 	g.routes = routes
 	g.apiKeys = apiKeys
 	return nil
 }
 
-func compileConfig(config Config) ([]compiledRoute, map[string]struct{}, error) {
+func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, map[string]struct{}, error) {
 	apiKeys := make(map[string]struct{})
+	policies := make(map[string]*compiledPolicy, len(config.Policies))
+
+	for _, policy := range config.Policies {
+		compiled, err := compilePolicy(policy)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("compile policy %q: %w", policy.Name, err)
+		}
+		policies[policy.Name] = compiled
+	}
 
 	routes := make([]compiledRoute, 0, len(config.Routes))
 	for _, route := range config.Routes {
 		if route.PathPrefix == "" || route.Target == "" {
-			return nil, nil, errors.New("every route needs path_prefix and target")
+			return nil, nil, nil, errors.New("every route needs path_prefix and target")
 		}
 
 		targetURL, err := url.Parse(route.Target)
 		if err != nil {
-			return nil, nil, fmt.Errorf("parse target %q: %w", route.Target, err)
+			return nil, nil, nil, fmt.Errorf("parse target %q: %w", route.Target, err)
 		}
 
 		proxy := newSingleHostProxy(targetURL, route)
@@ -244,11 +261,21 @@ func compileConfig(config Config) ([]compiledRoute, map[string]struct{}, error) 
 			}
 			routeAPIKeys[key] = struct{}{}
 		}
+
+		var policyRef *compiledPolicy
+		if route.PolicyName != "" {
+			var ok bool
+			policyRef, ok = policies[route.PolicyName]
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("route %q uses unknown policy %q", route.Name, route.PolicyName)
+			}
+		}
 		routes = append(routes, compiledRoute{
 			Route:     route,
 			targetURL: targetURL,
 			proxy:     proxy,
 			apiKeys:   routeAPIKeys,
+			policy:    policyRef,
 		})
 	}
 
@@ -256,7 +283,7 @@ func compileConfig(config Config) ([]compiledRoute, map[string]struct{}, error) 
 		return len(routes[i].PathPrefix) > len(routes[j].PathPrefix)
 	})
 
-	return routes, apiKeys, nil
+	return routes, policies, apiKeys, nil
 }
 
 func newSingleHostProxy(target *url.URL, route Route) *httputil.ReverseProxy {
@@ -399,6 +426,12 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.FormValue("action") {
+	case "add_policy":
+		g.handleAdminAddPolicy(w, r)
+	case "update_policy":
+		g.handleAdminUpdatePolicy(w, r)
+	case "delete_policy":
+		g.handleAdminDeletePolicy(w, r)
 	case "save_settings":
 		g.handleAdminSaveSettings(w, r)
 	case "change_password":
@@ -420,6 +453,67 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleAdminClearLogs(w http.ResponseWriter, r *http.Request) {
 	g.store.ClearLogs()
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (g *Gateway) handleAdminAddPolicy(w http.ResponseWriter, r *http.Request) {
+	config := g.currentConfig()
+	policy, err := policyFromForm(r)
+	if err != nil {
+		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
+		g.renderAdminForm(w, config, "", err.Error())
+		return
+	}
+
+	if err := g.store.AddPolicy(policy); err != nil {
+		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
+		g.renderAdminForm(w, config, "", err.Error())
+		return
+	}
+
+	g.reloadConfig()
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (g *Gateway) handleAdminUpdatePolicy(w http.ResponseWriter, r *http.Request) {
+	config := g.currentConfig()
+	index, err := policyIndexFromForm(r, len(config.Policies))
+	if err != nil {
+		g.renderAdminForm(w, config, "", err.Error())
+		return
+	}
+
+	policy, err := policyFromForm(r)
+	if err != nil {
+		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
+		g.renderAdminForm(w, config, "", err.Error())
+		return
+	}
+
+	if err := g.store.UpdatePolicy(index, policy); err != nil {
+		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
+		g.renderAdminForm(w, config, "", err.Error())
+		return
+	}
+
+	g.reloadConfig()
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (g *Gateway) handleAdminDeletePolicy(w http.ResponseWriter, r *http.Request) {
+	config := g.currentConfig()
+	index, err := policyIndexFromForm(r, len(config.Policies))
+	if err != nil {
+		g.renderAdminForm(w, config, "", err.Error())
+		return
+	}
+
+	if err := g.store.DeletePolicy(index); err != nil {
+		g.renderAdminForm(w, config, "", err.Error())
+		return
+	}
+
+	g.reloadConfig()
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -538,7 +632,7 @@ func (g *Gateway) saveConfig(config Config) error {
 	if err != nil {
 		return err
 	}
-	if _, _, err := compileConfig(config); err != nil {
+	if _, _, _, err := compileConfig(config); err != nil {
 		return err
 	}
 
@@ -565,24 +659,32 @@ func (g *Gateway) adminPageData(message, errText string) adminPageData {
 	config := g.currentConfig()
 	routes := make([]Route, len(config.Routes))
 	copy(routes, config.Routes)
+	policies := make([]Policy, len(config.Policies))
+	copy(policies, config.Policies)
 	logs, _ := g.store.ListLogs(config.LogLimit)
 	stats, routeStats := summarizeLogs(logs)
 	openRoutes := 0
 	protectedRoutes := 0
 	routeKeyCount := 0
 	for _, route := range routes {
-		if route.RequireAPIKey {
+		if route.PolicyName != "" || route.RequireAPIKey {
 			protectedRoutes++
 		} else {
 			openRoutes++
 		}
-		routeKeyCount += len(route.APIKeys)
+		if route.PolicyName == "" {
+			routeKeyCount += len(route.APIKeys)
+		}
+	}
+	for _, policy := range policies {
+		routeKeyCount += len(policy.APIKeys)
 	}
 
 	data := adminPageData{
 		AdminUsername:   config.Admin.Username,
 		AdminPassword:   config.Admin.Password,
 		LogLimit:        config.LogLimit,
+		Policies:        policies,
 		Routes:          routes,
 		OpenRoutes:      openRoutes,
 		ProtectedRoutes: protectedRoutes,
@@ -607,6 +709,8 @@ func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, message,
 	data.AdminUsername = config.Admin.Username
 	data.AdminPassword = config.Admin.Password
 	data.LogLimit = config.LogLimit
+	data.Policies = make([]Policy, len(config.Policies))
+	copy(data.Policies, config.Policies)
 	data.Routes = make([]Route, len(config.Routes))
 	copy(data.Routes, config.Routes)
 	g.renderAdminPage(w, data, http.StatusBadRequest)
@@ -720,9 +824,45 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ok, status, message := g.authorizePolicy(route, r); !ok {
+		http.Error(w, message, status)
+		g.store.AddLog(requestLog{
+			Time:       time.Now(),
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			Status:     status,
+			Route:      route.Name,
+			RemoteAddr: r.RemoteAddr,
+		})
+		return
+	}
+
+	if cached, ok := g.cachedPolicyResponse(route, r); ok {
+		writeCachedResponse(w, cached)
+		g.store.AddLog(requestLog{
+			Time:       time.Now(),
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			Status:     cached.status,
+			Route:      route.Name,
+			RemoteAddr: r.RemoteAddr,
+		})
+		return
+	}
+
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	writer := http.ResponseWriter(recorder)
+	cacheRecorder := &cacheRecorder{header: make(http.Header), status: http.StatusOK}
+	if shouldCacheRouteResponse(route, r) {
+		writer = cacheRecorder
+	}
 	start := time.Now()
-	route.proxy.ServeHTTP(recorder, r)
+	route.proxy.ServeHTTP(writer, r)
+	if writer == cacheRecorder {
+		copyResponse(w, cacheRecorder)
+		recorder.status = cacheRecorder.status
+		g.storeCachedPolicyResponse(route, r, cacheRecorder)
+	}
 	g.store.AddLog(requestLog{
 		Time:       time.Now(),
 		Method:     r.Method,
@@ -812,6 +952,18 @@ func normalizeConfig(config Config) (Config, error) {
 	if len(config.Routes) == 0 {
 		return Config{}, errors.New("config needs at least one route")
 	}
+	seenPolicies := map[string]struct{}{}
+	for i, policy := range config.Policies {
+		policy.Name = strings.TrimSpace(policy.Name)
+		if policy.Name == "" {
+			return Config{}, errors.New("policy name is required")
+		}
+		if _, ok := seenPolicies[policy.Name]; ok {
+			return Config{}, fmt.Errorf("policy %q already exists", policy.Name)
+		}
+		seenPolicies[policy.Name] = struct{}{}
+		config.Policies[i] = policy
+	}
 	return config, nil
 }
 
@@ -853,9 +1005,10 @@ func routeFromForm(r *http.Request) (Route, error) {
 		Name:          strings.TrimSpace(r.FormValue("route_name")),
 		PathPrefix:    normalizePathPrefix(strings.TrimSpace(r.FormValue("route_path_prefix"))),
 		Target:        strings.TrimSpace(r.FormValue("route_target")),
-		RequireAPIKey: r.FormValue("route_require_api_key") == "true",
+		PolicyName:    strings.TrimSpace(r.FormValue("route_policy_name")),
+		RequireAPIKey: false,
 		StripPrefix:   r.FormValue("route_strip_prefix") == "true",
-		APIKeys:       splitLines(r.FormValue("route_api_keys")),
+		APIKeys:       nil,
 	}
 
 	if route.Name == "" {
@@ -871,6 +1024,66 @@ func routeFromForm(r *http.Request) (Route, error) {
 	return route, nil
 }
 
+func policyFromForm(r *http.Request) (Policy, error) {
+	rateLimitRequests, err := intFromForm(r, "policy_rate_limit_requests")
+	if err != nil {
+		return Policy{}, err
+	}
+	rateLimitWindowSeconds, err := intFromForm(r, "policy_rate_limit_window_seconds")
+	if err != nil {
+		return Policy{}, err
+	}
+	maxPayloadBytes, err := int64FromForm(r, "policy_max_payload_bytes")
+	if err != nil {
+		return Policy{}, err
+	}
+	cacheTTLSeconds, err := intFromForm(r, "policy_cache_ttl_seconds")
+	if err != nil {
+		return Policy{}, err
+	}
+
+	policy := Policy{
+		Name:                   strings.TrimSpace(r.FormValue("policy_name")),
+		RequireAPIKey:          r.FormValue("policy_require_api_key") == "true",
+		APIKeys:                splitLines(r.FormValue("policy_api_keys")),
+		RateLimitRequests:      rateLimitRequests,
+		RateLimitWindowSeconds: rateLimitWindowSeconds,
+		MaxPayloadBytes:        maxPayloadBytes,
+		CacheTTLSeconds:        cacheTTLSeconds,
+		IPAllowList:            splitLines(r.FormValue("policy_ip_allow_list")),
+		IPBlockList:            splitLines(r.FormValue("policy_ip_block_list")),
+	}
+
+	if policy.Name == "" {
+		return Policy{}, errors.New("policy name is required")
+	}
+	if policy.RateLimitRequests > 0 && policy.RateLimitWindowSeconds <= 0 {
+		return Policy{}, errors.New("rate limit window seconds is required")
+	}
+	if policy.RateLimitWindowSeconds > 0 && policy.RateLimitRequests <= 0 {
+		return Policy{}, errors.New("rate limit requests is required")
+	}
+	return policy, nil
+}
+
+func policiesFromFormOrCurrent(r *http.Request, current []Policy) []Policy {
+	policy, err := policyFromForm(r)
+	if err != nil {
+		return current
+	}
+	value := strings.TrimSpace(r.FormValue("policy_index"))
+	if value == "" {
+		return append(append([]Policy(nil), current...), policy)
+	}
+	index, err := strconv.Atoi(value)
+	if err != nil || index < 0 || index >= len(current) {
+		return current
+	}
+	out := append([]Policy(nil), current...)
+	out[index] = policy
+	return out
+}
+
 func routeIndexFromForm(r *http.Request, routeCount int) (int, error) {
 	value := strings.TrimSpace(r.FormValue("route_index"))
 	index, err := strconv.Atoi(value)
@@ -879,6 +1092,18 @@ func routeIndexFromForm(r *http.Request, routeCount int) (int, error) {
 	}
 	if index < 0 || index >= routeCount {
 		return 0, errors.New("route index is out of range")
+	}
+	return index, nil
+}
+
+func policyIndexFromForm(r *http.Request, policyCount int) (int, error) {
+	value := strings.TrimSpace(r.FormValue("policy_index"))
+	index, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, errors.New("policy index is invalid")
+	}
+	if index < 0 || index >= policyCount {
+		return 0, errors.New("policy index is out of range")
 	}
 	return index, nil
 }
@@ -894,6 +1119,36 @@ func splitLines(value string) []string {
 		items = append(items, line)
 	}
 	return items
+}
+
+func intFromForm(r *http.Request, key string) (int, error) {
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number", strings.ReplaceAll(key, "_", " "))
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("%s must be zero or more", strings.ReplaceAll(key, "_", " "))
+	}
+	return parsed, nil
+}
+
+func int64FromForm(r *http.Request, key string) (int64, error) {
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number", strings.ReplaceAll(key, "_", " "))
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("%s must be zero or more", strings.ReplaceAll(key, "_", " "))
+	}
+	return parsed, nil
 }
 
 func formatDurationMS(d time.Duration) string {
@@ -1011,6 +1266,27 @@ const adminTemplate = `<!doctype html>
     .modal-box form { display: flex; flex-direction: column; gap: 12px; }
     .modal-box textarea { min-height: 90px; resize: vertical; }
     .modal-actions { display: flex; gap: 8px; }
+    .policy-modal-box { width: 720px; max-height: 90vh; overflow-y: auto; }
+    .policy-builder-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .policy-features { display: flex; flex-direction: column; gap: 12px; max-height: 52vh; overflow-y: auto; padding-right: 4px; }
+    .policy-feature-card { border: 1px solid #000; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .policy-feature-card.hidden { display: none; }
+    .policy-feature-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .policy-feature-header h3 { margin: 0; font-size: 0.95rem; font-weight: 500; }
+    .policy-feature-help { font-size: 0.8rem; opacity: 0.7; }
+    .policy-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+    .policy-field-grid.single { grid-template-columns: minmax(0, 1fr); }
+    .policy-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .policy-field label { font-size: 0.8rem; }
+    .policy-add-modal { z-index: 20; }
+    .policy-add-list { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+    .policy-add-option { width: 100%; text-align: left; padding: 12px; border: 1px solid #000; background: #fff; display: flex; flex-direction: column; gap: 4px; }
+    .policy-add-option small { opacity: 0.7; }
+    @media (max-width: 700px) {
+      .policy-modal-box { width: 92vw; }
+      .policy-field-grid { grid-template-columns: minmax(0, 1fr); }
+      .policy-builder-actions { flex-direction: column; align-items: stretch; }
+    }
   </style>
 </head>
 <body>
@@ -1027,6 +1303,7 @@ const adminTemplate = `<!doctype html>
   <main class="admin-main">
     <nav class="admin-tabs">
       <button class="tab-btn active" type="button" onclick="showTab('gateway', this)">gateway</button>
+      <button class="tab-btn" type="button" onclick="showTab('policy', this)">policy</button>
       <button class="tab-btn" type="button" onclick="showTab('logging', this)">logging</button>
       <button class="tab-btn" type="button" onclick="showTab('settings', this)">settings</button>
     </nav>
@@ -1043,7 +1320,7 @@ const adminTemplate = `<!doctype html>
                   <th>name</th>
                   <th>path</th>
                   <th>target</th>
-                  <th>auth</th>
+                  <th>policy</th>
                   <th>actions</th>
                 </tr>
               </thead>
@@ -1053,10 +1330,10 @@ const adminTemplate = `<!doctype html>
                   <td><span class="scroll-cell">{{ $route.Name }}</span></td>
                   <td><span class="scroll-cell">{{ $route.PathPrefix }}</span></td>
                   <td><span class="scroll-cell">{{ $route.Target }}</span></td>
-                  <td>{{ if $route.RequireAPIKey }}{{ len $route.APIKeys }} keys{{ else }}open{{ end }}</td>
+                  <td>{{ routePolicyLabel $route }}</td>
                   <td>
                     <div class="row-actions">
-                      <button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-require-api-key="{{ if $route.RequireAPIKey }}true{{ else }}false{{ end }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" data-route-api-keys="{{ range $i, $key := $route.APIKeys }}{{ if $i }}&#10;{{ end }}{{ $key }}{{ end }}" onclick="openEditRouteButton(this)">edit</button>
+                      <button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-policy-name="{{ $route.PolicyName }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" onclick="openEditRouteButton(this)">edit</button>
                       <form method="post" action="/">
                         <input type="hidden" name="action" value="delete_route">
                         <input type="hidden" name="route_index" value="{{ $index }}">
@@ -1065,6 +1342,44 @@ const adminTemplate = `<!doctype html>
                     </div>
                   </td>
                 </tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="policy-tab" class="tab-panel">
+        <div class="user-list-panel">
+          <h3>policies</h3>
+          <div class="panel-body">
+            <p><button type="button" onclick="openAddPolicy()">add policy</button></p>
+            <table class="routes-table">
+              <thead>
+                <tr>
+                  <th>name</th>
+                  <th>details</th>
+                  <th>actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{ range $index, $policy := .Policies }}
+                <tr>
+                  <td><span class="scroll-cell">{{ $policy.Name }}</span></td>
+                  <td><span class="scroll-cell">{{ policySummary $policy }}</span></td>
+                  <td>
+                    <div class="row-actions">
+                      <button type="button" data-policy-index="{{ $index }}" data-policy-name="{{ $policy.Name }}" data-policy-require-api-key="{{ if $policy.RequireAPIKey }}true{{ else }}false{{ end }}" data-policy-api-keys="{{ range $i, $key := $policy.APIKeys }}{{ if $i }}&#10;{{ end }}{{ $key }}{{ end }}" data-policy-rate-limit-requests="{{ $policy.RateLimitRequests }}" data-policy-rate-limit-window-seconds="{{ $policy.RateLimitWindowSeconds }}" data-policy-max-payload-bytes="{{ $policy.MaxPayloadBytes }}" data-policy-cache-ttl-seconds="{{ $policy.CacheTTLSeconds }}" data-policy-ip-allow-list="{{ range $i, $item := $policy.IPAllowList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-block-list="{{ range $i, $item := $policy.IPBlockList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" onclick="openEditPolicyButton(this)">edit</button>
+                      <form method="post" action="/">
+                        <input type="hidden" name="action" value="delete_policy">
+                        <input type="hidden" name="policy_index" value="{{ $index }}">
+                        <button type="submit">delete</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                {{ else }}
+                <tr><td colspan="3" class="muted">no policies yet</td></tr>
                 {{ end }}
               </tbody>
             </table>
@@ -1161,7 +1476,12 @@ const adminTemplate = `<!doctype html>
                   </tr>
                   <tr>
                     <td><strong>routes</strong></td>
-                    <td>{{ len .Routes }} ({{ .ProtectedRoutes }} protected, {{ .OpenRoutes }} open)</td>
+                    <td>{{ len .Routes }} ({{ .ProtectedRoutes }} using policy, {{ .OpenRoutes }} open)</td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><strong>policies</strong></td>
+                    <td>{{ len .Policies }}</td>
                     <td></td>
                   </tr>
                   <tr>
@@ -1197,10 +1517,12 @@ const adminTemplate = `<!doctype html>
         <label for="route-target">target</label>
         <input id="route-target" type="text" name="route_target" value="">
         <div class="settings-row">
-          <label for="route-require-api-key">auth</label>
-          <select id="route-require-api-key" name="route_require_api_key">
-            <option value="false">open</option>
-            <option value="true">api key</option>
+          <label for="route-policy-name">policy</label>
+          <select id="route-policy-name" name="route_policy_name">
+            <option value="">none</option>
+            {{ range .Policies }}
+            <option value="{{ .Name }}">{{ .Name }}</option>
+            {{ end }}
           </select>
         </div>
         <div class="settings-row">
@@ -1210,8 +1532,6 @@ const adminTemplate = `<!doctype html>
             <option value="true">yes</option>
           </select>
         </div>
-        <label for="route-api-keys">route api keys</label>
-        <textarea id="route-api-keys" name="route_api_keys" placeholder="one key per line"></textarea>
         <div class="modal-actions">
           <button type="submit">save</button>
           <button type="button" onclick="closeRouteModal()">cancel</button>
@@ -1234,9 +1554,177 @@ const adminTemplate = `<!doctype html>
     </div>
   </div>
 
+  <div id="policy-modal" class="modal hidden">
+    <div class="modal-box policy-modal-box">
+      <h2 id="policy-modal-title">add policy</h2>
+      <form method="post" action="/">
+        <input type="hidden" id="policy-action" name="action" value="add_policy">
+        <input type="hidden" id="policy-index" name="policy_index" value="">
+        <label for="policy-name">name</label>
+        <input id="policy-name" type="text" name="policy_name" value="">
+        <div class="policy-builder-actions">
+          <div class="policy-feature-help">add only the pieces you want</div>
+          <button type="button" onclick="openPolicyAddModal()">add feature</button>
+        </div>
+        <div id="policy-features" class="policy-features">
+          <section id="feature-api-key" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>api key auth</h3>
+              <button type="button" onclick="removePolicyFeature('api-key')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-require-api-key">mode</label>
+                <select id="policy-require-api-key" name="policy_require_api_key">
+                  <option value="false">off</option>
+                  <option value="true">on</option>
+                </select>
+              </div>
+              <div class="policy-field">
+                <label for="policy-api-keys">api keys</label>
+                <textarea id="policy-api-keys" name="policy_api_keys" placeholder="one key per line"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-rate-limit" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>rate limiting</h3>
+              <button type="button" onclick="removePolicyFeature('rate-limit')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-rate-limit-requests">requests</label>
+                <input id="policy-rate-limit-requests" type="number" name="policy_rate_limit_requests" value="" min="0">
+              </div>
+              <div class="policy-field">
+                <label for="policy-rate-limit-window-seconds">window seconds</label>
+                <input id="policy-rate-limit-window-seconds" type="number" name="policy_rate_limit_window_seconds" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-payload-limit" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>payload limit</h3>
+              <button type="button" onclick="removePolicyFeature('payload-limit')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-max-payload-bytes">max payload bytes</label>
+                <input id="policy-max-payload-bytes" type="number" name="policy_max_payload_bytes" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-cache" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>caching</h3>
+              <button type="button" onclick="removePolicyFeature('cache')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-cache-ttl-seconds">cache ttl seconds</label>
+                <input id="policy-cache-ttl-seconds" type="number" name="policy_cache_ttl_seconds" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-ip-allow" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>ip allow list</h3>
+              <button type="button" onclick="removePolicyFeature('ip-allow')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-ip-allow-list">allowed ips or cidrs</label>
+                <textarea id="policy-ip-allow-list" name="policy_ip_allow_list" placeholder="one ip or cidr per line"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-ip-block" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>ip block list</h3>
+              <button type="button" onclick="removePolicyFeature('ip-block')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-ip-block-list">blocked ips or cidrs</label>
+                <textarea id="policy-ip-block-list" name="policy_ip_block_list" placeholder="one ip or cidr per line"></textarea>
+              </div>
+            </div>
+          </section>
+        </div>
+        <div class="modal-actions">
+          <button type="submit">save</button>
+          <button type="button" onclick="closePolicyModal()">cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="policy-add-modal" class="modal policy-add-modal hidden">
+    <div class="modal-box">
+      <h2>add policy feature</h2>
+      <div class="policy-add-list">
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('api-key')"><strong>api key auth</strong><small>require a key and optionally list allowed keys</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('rate-limit')"><strong>rate limiting</strong><small>limit requests in a time window</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('payload-limit')"><strong>payload limit</strong><small>reject bodies over a size limit</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('cache')"><strong>caching</strong><small>cache successful GET responses</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('ip-allow')"><strong>ip allow list</strong><small>only allow listed ips or cidrs</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('ip-block')"><strong>ip block list</strong><small>deny listed ips or cidrs</small></button>
+      </div>
+      <div class="modal-actions">
+        <button type="button" onclick="closePolicyAddModal()">close</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     var settingsFieldMap = {
       'log_limit': { title: 'edit log limit', action: 'save_logging' }
+    }
+
+    var policyFeatureMap = {
+      'api-key': {
+        cardId: 'feature-api-key',
+        reset: function () {
+          document.getElementById('policy-require-api-key').value = 'false'
+          document.getElementById('policy-api-keys').value = ''
+        }
+      },
+      'rate-limit': {
+        cardId: 'feature-rate-limit',
+        reset: function () {
+          document.getElementById('policy-rate-limit-requests').value = ''
+          document.getElementById('policy-rate-limit-window-seconds').value = ''
+        }
+      },
+      'payload-limit': {
+        cardId: 'feature-payload-limit',
+        reset: function () {
+          document.getElementById('policy-max-payload-bytes').value = ''
+        }
+      },
+      'cache': {
+        cardId: 'feature-cache',
+        reset: function () {
+          document.getElementById('policy-cache-ttl-seconds').value = ''
+        }
+      },
+      'ip-allow': {
+        cardId: 'feature-ip-allow',
+        reset: function () {
+          document.getElementById('policy-ip-allow-list').value = ''
+        }
+      },
+      'ip-block': {
+        cardId: 'feature-ip-block',
+        reset: function () {
+          document.getElementById('policy-ip-block-list').value = ''
+        }
+      }
     }
 
     function openSettingsModal(field, currentValue) {
@@ -1269,9 +1757,8 @@ const adminTemplate = `<!doctype html>
       document.getElementById('route-name').value = ''
       document.getElementById('route-path-prefix').value = ''
       document.getElementById('route-target').value = ''
-      document.getElementById('route-require-api-key').value = 'false'
+      document.getElementById('route-policy-name').value = ''
       document.getElementById('route-strip-prefix').value = 'false'
-      document.getElementById('route-api-keys').value = ''
       document.getElementById('route-modal').classList.remove('hidden')
     }
 
@@ -1283,14 +1770,119 @@ const adminTemplate = `<!doctype html>
       document.getElementById('route-name').value = data.routeName
       document.getElementById('route-path-prefix').value = data.routePathPrefix
       document.getElementById('route-target').value = data.routeTarget
-      document.getElementById('route-require-api-key').value = data.routeRequireApiKey
+      document.getElementById('route-policy-name').value = data.routePolicyName
       document.getElementById('route-strip-prefix').value = data.routeStripPrefix
-      document.getElementById('route-api-keys').value = data.routeApiKeys
       document.getElementById('route-modal').classList.remove('hidden')
     }
 
     function closeRouteModal() {
       document.getElementById('route-modal').classList.add('hidden')
+    }
+
+    function openAddPolicy() {
+      document.getElementById('policy-modal-title').textContent = 'add policy'
+      document.getElementById('policy-action').value = 'add_policy'
+      document.getElementById('policy-index').value = ''
+      document.getElementById('policy-name').value = ''
+      resetPolicyFeatures()
+      document.getElementById('policy-modal').classList.remove('hidden')
+    }
+
+    function openEditPolicyButton(button) {
+      const data = button.dataset
+      document.getElementById('policy-modal-title').textContent = 'edit policy'
+      document.getElementById('policy-action').value = 'update_policy'
+      document.getElementById('policy-index').value = data.policyIndex
+      document.getElementById('policy-name').value = data.policyName
+      document.getElementById('policy-require-api-key').value = data.policyRequireApiKey
+      document.getElementById('policy-api-keys').value = data.policyApiKeys
+      document.getElementById('policy-rate-limit-requests').value = data.policyRateLimitRequests
+      document.getElementById('policy-rate-limit-window-seconds').value = data.policyRateLimitWindowSeconds
+      document.getElementById('policy-max-payload-bytes').value = data.policyMaxPayloadBytes
+      document.getElementById('policy-cache-ttl-seconds').value = data.policyCacheTtlSeconds
+      document.getElementById('policy-ip-allow-list').value = data.policyIpAllowList
+      document.getElementById('policy-ip-block-list').value = data.policyIpBlockList
+      syncPolicyFeaturesFromValues()
+      document.getElementById('policy-modal').classList.remove('hidden')
+    }
+
+    function closePolicyModal() {
+      document.getElementById('policy-modal').classList.add('hidden')
+      closePolicyAddModal()
+    }
+
+    function openPolicyAddModal() {
+      document.getElementById('policy-add-modal').classList.remove('hidden')
+    }
+
+    function closePolicyAddModal() {
+      document.getElementById('policy-add-modal').classList.add('hidden')
+    }
+
+    function addPolicyFeature(name) {
+      var feature = policyFeatureMap[name]
+      if (!feature) return
+      document.getElementById(feature.cardId).classList.remove('hidden')
+      closePolicyAddModal()
+    }
+
+    function removePolicyFeature(name) {
+      var feature = policyFeatureMap[name]
+      if (!feature) return
+      feature.reset()
+      document.getElementById(feature.cardId).classList.add('hidden')
+    }
+
+    function resetPolicyFeatures() {
+      Object.keys(policyFeatureMap).forEach(function (name) {
+        policyFeatureMap[name].reset()
+        document.getElementById(policyFeatureMap[name].cardId).classList.add('hidden')
+      })
+    }
+
+    function hidePolicyFeatures() {
+      Object.keys(policyFeatureMap).forEach(function (name) {
+        document.getElementById(policyFeatureMap[name].cardId).classList.add('hidden')
+      })
+    }
+
+    function syncPolicyFeaturesFromValues() {
+      var values = {
+        requireApiKey: document.getElementById('policy-require-api-key').value,
+        apiKeys: document.getElementById('policy-api-keys').value,
+        rateLimitRequests: document.getElementById('policy-rate-limit-requests').value,
+        rateLimitWindowSeconds: document.getElementById('policy-rate-limit-window-seconds').value,
+        maxPayloadBytes: document.getElementById('policy-max-payload-bytes').value,
+        cacheTTLSeconds: document.getElementById('policy-cache-ttl-seconds').value,
+        ipAllowList: document.getElementById('policy-ip-allow-list').value,
+        ipBlockList: document.getElementById('policy-ip-block-list').value
+      }
+
+      hidePolicyFeatures()
+
+      document.getElementById('policy-require-api-key').value = values.requireApiKey
+      document.getElementById('policy-api-keys').value = values.apiKeys
+      document.getElementById('policy-rate-limit-requests').value = values.rateLimitRequests
+      document.getElementById('policy-rate-limit-window-seconds').value = values.rateLimitWindowSeconds
+      document.getElementById('policy-max-payload-bytes').value = values.maxPayloadBytes
+      document.getElementById('policy-cache-ttl-seconds').value = values.cacheTTLSeconds
+      document.getElementById('policy-ip-allow-list').value = values.ipAllowList
+      document.getElementById('policy-ip-block-list').value = values.ipBlockList
+
+      if (document.getElementById('policy-require-api-key').value === 'true' || document.getElementById('policy-api-keys').value.trim() !== '') addPolicyFeature('api-key')
+      if (featureValueIsEnabled('policy-rate-limit-requests') || featureValueIsEnabled('policy-rate-limit-window-seconds')) addPolicyFeature('rate-limit')
+      if (featureValueIsEnabled('policy-max-payload-bytes')) addPolicyFeature('payload-limit')
+      if (featureValueIsEnabled('policy-cache-ttl-seconds')) addPolicyFeature('cache')
+      if (document.getElementById('policy-ip-allow-list').value.trim() !== '') addPolicyFeature('ip-allow')
+      if (document.getElementById('policy-ip-block-list').value.trim() !== '') addPolicyFeature('ip-block')
+    }
+
+    function featureValueIsEnabled(id) {
+      var value = document.getElementById(id).value.trim()
+      if (value === '') return false
+      var number = Number(value)
+      if (Number.isNaN(number)) return true
+      return number > 0
     }
   </script>
 </body>

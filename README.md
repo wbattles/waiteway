@@ -5,7 +5,7 @@ Gateways made simple.
 ## What it does
 
 - reverse proxy by path prefix
-- per-route API keys
+- reusable route policies
 - admin portal with login
 - request logging persisted in SQLite
 - health endpoint
@@ -109,9 +109,10 @@ Ports are set by environment variables or defaults only. They cannot be changed 
 
 ## Admin portal
 
-Three tabs:
+Four tabs:
 
-- **gateway** — add, edit, delete routes. set per-route API keys.
+- **gateway** — add, edit, delete routes. attach one policy to each route.
+- **policy** — create reusable policy bundles.
 - **logging** — view request logs, stats, top routes.
 - **settings** — change password, username, log limit.
 
@@ -120,10 +121,25 @@ Three tabs:
 1. Open the admin portal
 2. Go to the gateway tab
 3. Click add route
-4. Set the name, path prefix, target, and auth
+4. Set the name, path prefix, target, and policy
 5. Save
 
 Requests matching the path prefix get proxied to the target.
+
+## Policies
+
+Policies are reusable route rules.
+
+One route can have one policy.
+
+A policy can include:
+
+- API key auth
+- rate limiting
+- payload size limit
+- response caching for GET requests
+- IP allow lists
+- IP block lists
 
 ## Architecture
 
