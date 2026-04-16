@@ -597,12 +597,23 @@ func (s *Store) UpdatePolicy(index int, policy Policy) error {
 		return err
 	}
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var oldName string
+	if err := tx.QueryRow("SELECT name FROM policies WHERE id = ?", id).Scan(&oldName); err != nil {
+		return err
+	}
+
 	requireAPIKey := 0
 	if policy.RequireAPIKey {
 		requireAPIKey = 1
 	}
 
-	_, err = s.db.Exec(
+	_, err = tx.Exec(
 		`UPDATE policies SET name = ?, request_timeout_seconds = ?, retry_count = ?, require_api_key = ?, api_keys = ?, basic_auth_username = ?, basic_auth_password = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, allowed_methods = ?, rewrite_path_prefix = ?, add_request_headers = ?, remove_request_headers = ?, max_payload_bytes = ?, request_transform_find = ?, request_transform_replace = ?, cache_ttl_seconds = ?, add_response_headers = ?, remove_response_headers = ?, response_transform_find = ?, response_transform_replace = ?, max_response_bytes = ?, cors_allow_origins = ?, cors_allow_methods = ?, cors_allow_headers = ?, ip_allow_list = ?, ip_block_list = ?, circuit_breaker_failures = ?, circuit_breaker_reset_seconds = ? WHERE id = ?`,
 		policy.Name,
 		policy.RequestTimeoutSeconds,
@@ -635,7 +646,17 @@ func (s *Store) UpdatePolicy(index int, policy Policy) error {
 		policy.CircuitBreakerResetSeconds,
 		id,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if oldName != policy.Name {
+		if _, err := tx.Exec("UPDATE routes SET policy_name = ? WHERE policy_name = ?", policy.Name, oldName); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *Store) DeletePolicy(index int) error {

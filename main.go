@@ -20,10 +20,11 @@ import (
 )
 
 type Config struct {
-	Admin    AdminConfig
-	LogLimit int
-	Policies []Policy
-	Routes   []Route
+	Admin     AdminConfig
+	LogLimit  int
+	Policies  []Policy
+	Routes    []Route
+	ActiveTab string
 }
 
 type AdminConfig struct {
@@ -82,6 +83,7 @@ type adminPageData struct {
 	LogLimit        int
 	Policies        []Policy
 	Routes          []Route
+	ActiveTab       string
 	OpenRoutes      int
 	ProtectedRoutes int
 	RouteKeyCount   int
@@ -371,7 +373,8 @@ func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
 
 	message := r.URL.Query().Get("message")
 	errText := r.URL.Query().Get("error")
-	g.renderAdminPage(w, g.adminPageData(message, errText), http.StatusOK)
+	activeTab := normalizeAdminTab(r.URL.Query().Get("tab"))
+	g.renderAdminPage(w, g.adminPageData(message, errText, activeTab), http.StatusOK)
 }
 
 func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
@@ -472,7 +475,7 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleAdminClearLogs(w http.ResponseWriter, r *http.Request) {
 	g.store.ClearLogs()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminAddPolicy(w http.ResponseWriter, r *http.Request) {
@@ -486,18 +489,20 @@ func (g *Gateway) handleAdminAddPolicy(w http.ResponseWriter, r *http.Request) {
 
 	if err := g.store.AddPolicy(policy); err != nil {
 		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
+		config.ActiveTab = "policy"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	g.reloadConfig()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=policy", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	config := g.currentConfig()
 	index, err := policyIndexFromForm(r, len(config.Policies))
 	if err != nil {
+		config.ActiveTab = "policy"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
@@ -505,50 +510,56 @@ func (g *Gateway) handleAdminUpdatePolicy(w http.ResponseWriter, r *http.Request
 	policy, err := policyFromForm(r)
 	if err != nil {
 		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
+		config.ActiveTab = "policy"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	if err := g.store.UpdatePolicy(index, policy); err != nil {
 		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
+		config.ActiveTab = "policy"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	g.reloadConfig()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=policy", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminDeletePolicy(w http.ResponseWriter, r *http.Request) {
 	config := g.currentConfig()
 	index, err := policyIndexFromForm(r, len(config.Policies))
 	if err != nil {
+		config.ActiveTab = "policy"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	if err := g.store.DeletePolicy(index); err != nil {
+		config.ActiveTab = "policy"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	g.reloadConfig()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=policy", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminSaveSettings(w http.ResponseWriter, r *http.Request) {
 	config, err := settingsConfigFromForm(r, g.currentConfig())
 	if err != nil {
+		config.ActiveTab = "settings"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	if err := g.saveConfig(config); err != nil {
+		config.ActiveTab = "settings"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Request) {
@@ -557,36 +568,41 @@ func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Reque
 	newPassword := r.FormValue("new_password")
 
 	if currentPassword != config.Admin.Password {
+		config.ActiveTab = "settings"
 		g.renderAdminForm(w, config, "", "current password is wrong")
 		return
 	}
 	if strings.TrimSpace(newPassword) == "" {
+		config.ActiveTab = "settings"
 		g.renderAdminForm(w, config, "", "new password is required")
 		return
 	}
 
 	config.Admin.Password = newPassword
 	if err := g.saveConfig(config); err != nil {
+		config.ActiveTab = "settings"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminSaveLogging(w http.ResponseWriter, r *http.Request) {
 	config, err := loggingConfigFromForm(r, g.currentConfig())
 	if err != nil {
+		config.ActiveTab = "settings"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	if err := g.saveConfig(config); err != nil {
+		config.ActiveTab = "settings"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
@@ -674,7 +690,7 @@ func (g *Gateway) reloadConfig() error {
 	return g.applyConfig(config)
 }
 
-func (g *Gateway) adminPageData(message, errText string) adminPageData {
+func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageData {
 	config := g.currentConfig()
 	routes := make([]Route, len(config.Routes))
 	copy(routes, config.Routes)
@@ -705,6 +721,7 @@ func (g *Gateway) adminPageData(message, errText string) adminPageData {
 		LogLimit:        config.LogLimit,
 		Policies:        policies,
 		Routes:          routes,
+		ActiveTab:       normalizeAdminTab(activeTab),
 		OpenRoutes:      openRoutes,
 		ProtectedRoutes: protectedRoutes,
 		RouteKeyCount:   routeKeyCount,
@@ -720,11 +737,11 @@ func (g *Gateway) adminPageData(message, errText string) adminPageData {
 }
 
 func (g *Gateway) renderAdminError(w http.ResponseWriter, message string) {
-	g.renderAdminPage(w, g.adminPageData("", message), http.StatusBadRequest)
+	g.renderAdminPage(w, g.adminPageData("", message, "gateway"), http.StatusBadRequest)
 }
 
 func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, message, errText string) {
-	data := g.adminPageData(message, errText)
+	data := g.adminPageData(message, errText, config.ActiveTab)
 	data.AdminUsername = config.Admin.Username
 	data.AdminPassword = config.Admin.Password
 	data.LogLimit = config.LogLimit
@@ -732,6 +749,7 @@ func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, message,
 	copy(data.Policies, config.Policies)
 	data.Routes = make([]Route, len(config.Routes))
 	copy(data.Routes, config.Routes)
+	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
 	g.renderAdminPage(w, data, http.StatusBadRequest)
 }
 
@@ -993,10 +1011,11 @@ func normalizeConfig(config Config) (Config, error) {
 		if policy.Name == "" {
 			return Config{}, errors.New("policy name is required")
 		}
-		if _, ok := seenPolicies[policy.Name]; ok {
+		key := strings.ToLower(policy.Name)
+		if _, ok := seenPolicies[key]; ok {
 			return Config{}, fmt.Errorf("policy %q already exists", policy.Name)
 		}
-		seenPolicies[policy.Name] = struct{}{}
+		seenPolicies[key] = struct{}{}
 		config.Policies[i] = policy
 	}
 	return config, nil
@@ -1265,6 +1284,15 @@ func normalizePathPrefix(value string) string {
 	return value
 }
 
+func normalizeAdminTab(value string) string {
+	switch value {
+	case "policy", "logging", "settings":
+		return value
+	default:
+		return "gateway"
+	}
+}
+
 const adminTemplate = `<!doctype html>
 <html lang="en">
 <head>
@@ -1302,8 +1330,8 @@ const adminTemplate = `<!doctype html>
     .settings-row label { flex-shrink: 0; width: 70px; }
     .settings-panel select { width: 100%; box-sizing: border-box; }
     .settings-panel button { margin-top: 4px; }
-    .logging-layout { display: grid; grid-template-columns: 240px 1fr; gap: 24px; align-items: stretch; min-height: 78vh; }
-    .logging-sidebar { display: flex; flex-direction: column; gap: 16px; height: 78vh; }
+    .logging-layout { display: grid; grid-template-columns: 240px 1fr; gap: 24px; align-items: stretch; min-height: 500px; }
+    .logging-sidebar { display: flex; flex-direction: column; gap: 16px; height: 500px; }
     .stats-grid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 0; flex: 1; }
     .stat-card { border: 1px solid #000; padding: 10px 12px; min-height: 0; }
     .stat-label { font-size: 0.75rem; opacity: 0.7; margin-bottom: 4px; }
@@ -1316,9 +1344,9 @@ const adminTemplate = `<!doctype html>
     .route-stat-name { flex: 1; min-width: 0; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
     .route-stat-name::-webkit-scrollbar { display: none; }
     .route-stat-count { flex-shrink: 0; }
-    .log-panel { min-height: 78vh; height: 78vh; }
-    .log-table-wrap { overflow-y: auto; overflow-x: hidden; max-height: 70vh; }
-    .user-list-panel { border: 1px solid #000; display: flex; flex-direction: column; min-height: 420px; }
+    .log-panel { min-height: 500px; height: 500px; }
+    .log-table-wrap { overflow-y: auto; overflow-x: hidden; height: 100%; max-height: none; }
+    .user-list-panel { border: 1px solid #000; display: flex; flex-direction: column; min-height: 500px; }
     .user-list-panel h3 { padding: 16px 20px 0 20px; margin-bottom: 16px; border-bottom: 1px solid #000; padding-bottom: 12px; flex-shrink: 0; }
     .panel-body { padding: 0 20px 20px 20px; flex: 1; overflow-y: auto; min-height: 0; }
     .log-panel-body { overflow: hidden; }
@@ -1377,20 +1405,16 @@ const adminTemplate = `<!doctype html>
       <form method="post" action="/logout"><button type="submit">logout</button></form>
     </div>
   </header>
-
-  {{ if .Message }}<div class="message">{{ .Message }}</div>{{ end }}
-  {{ if .Error }}<div class="message">{{ .Error }}</div>{{ end }}
-
   <main class="admin-main">
     <nav class="admin-tabs">
-      <button class="tab-btn active" type="button" onclick="showTab('gateway', this)">gateway</button>
-      <button class="tab-btn" type="button" onclick="showTab('policy', this)">policy</button>
-      <button class="tab-btn" type="button" onclick="showTab('logging', this)">logging</button>
-      <button class="tab-btn" type="button" onclick="showTab('settings', this)">settings</button>
+      <button class="tab-btn {{ if eq .ActiveTab "gateway" }}active{{ end }}" type="button" onclick="showTab('gateway', this)">gateway</button>
+      <button class="tab-btn {{ if eq .ActiveTab "policy" }}active{{ end }}" type="button" onclick="showTab('policy', this)">policy</button>
+      <button class="tab-btn {{ if eq .ActiveTab "logging" }}active{{ end }}" type="button" onclick="showTab('logging', this)">logging</button>
+      <button class="tab-btn {{ if eq .ActiveTab "settings" }}active{{ end }}" type="button" onclick="showTab('settings', this)">settings</button>
     </nav>
 
     <div class="tab-content">
-      <section id="gateway-tab" class="tab-panel active">
+      <section id="gateway-tab" class="tab-panel {{ if eq .ActiveTab "gateway" }}active{{ end }}">
         <div class="user-list-panel">
           <h3>routes</h3>
           <div class="panel-body">
@@ -1430,7 +1454,7 @@ const adminTemplate = `<!doctype html>
         </div>
       </section>
 
-      <section id="policy-tab" class="tab-panel">
+      <section id="policy-tab" class="tab-panel {{ if eq .ActiveTab "policy" }}active{{ end }}">
         <div class="user-list-panel">
           <h3>policies</h3>
           <div class="panel-body">
@@ -1468,7 +1492,7 @@ const adminTemplate = `<!doctype html>
         </div>
       </section>
 
-      <section id="logging-tab" class="tab-panel">
+      <section id="logging-tab" class="tab-panel {{ if eq .ActiveTab "logging" }}active{{ end }}">
         <div class="logging-layout">
           <div class="logging-sidebar">
             <div class="route-stats">
@@ -1528,16 +1552,16 @@ const adminTemplate = `<!doctype html>
         </div>
       </section>
 
-      <section id="settings-tab" class="tab-panel">
+      <section id="settings-tab" class="tab-panel {{ if eq .ActiveTab "settings" }}active{{ end }}">
         <div class="users-layout">
           <div class="create-user-panel">
             <h3>admin account</h3>
-            <form method="post" action="/">
+            <form method="post" action="/?tab=settings">
               <input type="hidden" name="action" value="save_settings">
               <input type="text" name="admin_username" value="{{ .AdminUsername }}" placeholder="admin username">
               <button type="submit">save username</button>
             </form>
-            <form method="post" action="/">
+            <form method="post" action="/?tab=settings">
               <input type="hidden" name="action" value="change_password">
               <input type="password" name="current_password" placeholder="current password" required>
               <input type="password" name="new_password" placeholder="new password" required>
@@ -1573,7 +1597,7 @@ const adminTemplate = `<!doctype html>
                 </tbody>
               </table>
               <div style="margin-top: 16px">
-                <form method="post" action="/" style="display:inline">
+                <form method="post" action="/?tab=settings" style="display:inline">
                   <input type="hidden" name="action" value="clear_logs">
                   <button type="submit">clear logs</button>
                 </form>
@@ -1624,7 +1648,7 @@ const adminTemplate = `<!doctype html>
   <div id="settings-modal" class="modal hidden">
     <div class="modal-box">
       <h2 id="settings-modal-title">edit setting</h2>
-      <form method="post" action="/">
+      <form method="post" action="/?tab=settings">
         <input type="hidden" id="settings-action" name="action" value="save_logging">
         <input id="settings-value" type="text" name="" value="">
         <div class="modal-actions">
@@ -1638,11 +1662,11 @@ const adminTemplate = `<!doctype html>
   <div id="policy-modal" class="modal hidden">
     <div class="modal-box policy-modal-box">
       <h2 id="policy-modal-title">add policy</h2>
-      <form method="post" action="/">
+      <form id="policy-form" method="post" action="/">
         <input type="hidden" id="policy-action" name="action" value="add_policy">
         <input type="hidden" id="policy-index" name="policy_index" value="">
         <label for="policy-name">name</label>
-        <input id="policy-name" type="text" name="policy_name" value="">
+        <input id="policy-name" type="text" name="policy_name" value="" required>
         <div class="policy-builder-actions">
           <div class="policy-feature-help">add only the pieces you want</div>
           <button type="button" onclick="openPolicyAddModal()">add feature</button>
@@ -1967,6 +1991,8 @@ const adminTemplate = `<!doctype html>
       'log_limit': { title: 'edit log limit', action: 'save_logging' }
     }
 
+    var existingPolicyNames = [{{ range $index, $policy := .Policies }}{{ if $index }}, {{ end }}{{ printf "%q" $policy.Name }}{{ end }}]
+
     var policyFeatureMap = {
       'timeout': {
         cardId: 'feature-timeout',
@@ -2109,6 +2135,10 @@ const adminTemplate = `<!doctype html>
       document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'))
       button.classList.add('active')
       document.getElementById(name + '-tab').classList.add('active')
+      var nextURL = new URL(window.location.href)
+      if (name === 'gateway') nextURL.searchParams.delete('tab')
+      else nextURL.searchParams.set('tab', name)
+      window.history.replaceState({}, '', nextURL.toString())
     }
 
     function openAddRoute() {
@@ -2317,6 +2347,19 @@ const adminTemplate = `<!doctype html>
       if (Number.isNaN(number)) return true
       return number > 0
     }
+
+    document.getElementById('policy-form').addEventListener('submit', function (event) {
+      var nameInput = document.getElementById('policy-name')
+      var nextName = nameInput.value.trim().toLowerCase()
+      var currentIndex = document.getElementById('policy-index').value
+      var duplicate = existingPolicyNames.some(function (name, index) {
+        if (currentIndex !== '' && String(index) === currentIndex) return false
+        return name.trim().toLowerCase() === nextName
+      })
+      if (!duplicate) return
+      event.preventDefault()
+      window.alert('policy name already exists')
+    })
   </script>
 </body>
 </html>`
