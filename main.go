@@ -293,31 +293,22 @@ func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *h
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
+		incomingPath := req.URL.Path
 		originalDirector(req)
 
-		if route.StripPrefix {
-			incomingPath := req.URL.Path
-			// originalDirector already prepended target.Path, so undo that
-			trimmed := strings.TrimPrefix(incomingPath, target.Path)
-			trimmed = strings.TrimPrefix(trimmed, route.PathPrefix)
-			if trimmed == "" || trimmed == "/" {
-				req.URL.Path = target.Path
-			} else {
-				if !strings.HasPrefix(trimmed, "/") {
-					trimmed = "/" + trimmed
-				}
-				req.URL.Path = joinURLPath(target.Path, trimmed)
-			}
+		remainder := strings.TrimPrefix(incomingPath, route.PathPrefix)
+		if remainder != "" && !strings.HasPrefix(remainder, "/") {
+			remainder = "/" + remainder
 		}
 
 		if policy != nil && policy.RewritePathPrefix != "" {
-			rewritten := strings.TrimPrefix(req.URL.Path, target.Path)
-			if strings.HasPrefix(rewritten, route.PathPrefix) {
-				remainder := strings.TrimPrefix(rewritten, route.PathPrefix)
-				if remainder != "" && !strings.HasPrefix(remainder, "/") {
-					remainder = "/" + remainder
-				}
-				req.URL.Path = joinURLPath(target.Path, policy.RewritePathPrefix+remainder)
+			// rewrite takes priority over strip prefix
+			req.URL.Path = joinURLPath(target.Path, policy.RewritePathPrefix+remainder)
+		} else if route.StripPrefix {
+			if remainder == "" || remainder == "/" {
+				req.URL.Path = target.Path
+			} else {
+				req.URL.Path = joinURLPath(target.Path, remainder)
 			}
 		}
 
@@ -334,6 +325,10 @@ func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *h
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		if err != nil && err.Error() == "response too large" {
+			http.Error(w, "response too large", http.StatusBadGateway)
+			return
+		}
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 	}
 

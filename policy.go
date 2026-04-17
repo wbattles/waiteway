@@ -462,19 +462,14 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	for attempt := 0; attempt <= t.retries; attempt++ {
 		clone := req.Clone(req.Context())
-		if clone.Body == nil {
-			if b, gerr := getBody(); gerr != nil {
-				return nil, gerr
-			} else if b != nil {
-				clone.Body = b
-			}
+		if b, gerr := getBody(); gerr != nil {
+			return nil, gerr
+		} else if b != nil {
+			clone.Body = b
 		}
 		resp, err = base.RoundTrip(clone)
 		if err == nil {
 			return resp, nil
-		}
-		if clone.Body != nil {
-			_ = clone.Body.Close()
 		}
 	}
 	return nil, err
