@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"os"
 	"sort"
@@ -20,16 +21,23 @@ import (
 )
 
 type Config struct {
-	Admin     AdminConfig
-	LogLimit  int
-	Policies  []Policy
-	Routes    []Route
-	ActiveTab string
+	Admin        AdminConfig
+	LogLimit     int
+	LoadBalancer LoadBalancerConfig
+	Policies     []Policy
+	Routes       []Route
+	ActiveTab    string
 }
 
 type AdminConfig struct {
 	Username string
 	Password string
+}
+
+type LoadBalancerConfig struct {
+	Mode           string
+	ClientIPHeader string
+	StripPort      bool
 }
 
 type Route struct {
@@ -43,15 +51,17 @@ type Route struct {
 }
 
 type Gateway struct {
-	mu        sync.RWMutex
-	store     *Store
-	config    Config
-	policies  map[string]*compiledPolicy
-	routes    []compiledRoute
-	apiKeys   map[string]struct{}
-	tmpl      *template.Template
-	loginTmpl *template.Template
-	startedAt time.Time
+	mu          sync.RWMutex
+	store       *Store
+	config      Config
+	policies    map[string]*compiledPolicy
+	routes      []compiledRoute
+	apiKeys     map[string]struct{}
+	tmpl        *template.Template
+	loginTmpl   *template.Template
+	startedAt   time.Time
+	listenAddr  string
+	adminListen string
 }
 
 type compiledRoute struct {
@@ -78,21 +88,29 @@ type statusRecorder struct {
 }
 
 type adminPageData struct {
-	AdminUsername   string
-	AdminPassword   string
-	LogLimit        int
-	Policies        []Policy
-	Routes          []Route
-	ActiveTab       string
-	OpenRoutes      int
-	ProtectedRoutes int
-	RouteKeyCount   int
-	Logs            []requestLog
-	LogStats        logStats
-	RouteStats      []routeStat
-	Uptime          string
-	Message         string
-	Error           string
+	AdminUsername         string
+	AdminPassword         string
+	LogLimit              int
+	LoadBalancerMode      string
+	LoadBalancerHeader    string
+	LoadBalancerHeaders   string
+	LoadBalancerStripPort bool
+	GatewayListen         string
+	AdminListen           string
+	GatewayHealthPath     string
+	AdminHealthPath       string
+	Policies              []Policy
+	Routes                []Route
+	ActiveTab             string
+	OpenRoutes            int
+	ProtectedRoutes       int
+	RouteKeyCount         int
+	Logs                  []requestLog
+	LogStats              logStats
+	RouteStats            []routeStat
+	Uptime                string
+	Message               string
+	Error                 string
 }
 
 type logStats struct {
@@ -101,6 +119,7 @@ type logStats struct {
 	Errors       int
 	Unauthorized int
 	UniqueRoutes int
+	ErrorRate    float64
 	Average      time.Duration
 	Slowest      time.Duration
 }
@@ -190,6 +209,8 @@ func seedFromEnv(store *Store) {
 func newGateway(store *Store, config Config) (*Gateway, error) {
 	tmpl, err := template.New("admin").Funcs(template.FuncMap{
 		"formatDurationMS": formatDurationMS,
+		"formatClientIP":   formatClientIP,
+		"formatPercent":    formatPercent,
 		"routePolicyLabel": routePolicyLabel,
 		"policySummary":    policySummary,
 	}).Parse(adminTemplate)
@@ -203,10 +224,12 @@ func newGateway(store *Store, config Config) (*Gateway, error) {
 	}
 
 	g := &Gateway{
-		store:     store,
-		startedAt: time.Now(),
-		tmpl:      tmpl,
-		loginTmpl: loginTmpl,
+		store:       store,
+		startedAt:   time.Now(),
+		tmpl:        tmpl,
+		loginTmpl:   loginTmpl,
+		listenAddr:  envOrDefault("WAITEWAY_LISTEN", ":8080"),
+		adminListen: envOrDefault("WAITEWAY_ADMIN_LISTEN", ":9090"),
 	}
 
 	if err := g.applyConfig(config); err != nil {
@@ -217,6 +240,7 @@ func newGateway(store *Store, config Config) (*Gateway, error) {
 }
 
 func (g *Gateway) applyConfig(config Config) error {
+	config.LoadBalancer = normalizeLoadBalancerConfig(config.LoadBalancer)
 	routes, policies, apiKeys, err := compileConfig(config)
 	if err != nil {
 		return err
@@ -455,6 +479,8 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 		g.handleAdminChangePassword(w, r)
 	case "save_logging":
 		g.handleAdminSaveLogging(w, r)
+	case "save_load_balancer":
+		g.handleAdminSaveLoadBalancer(w, r)
 	case "clear_logs":
 		g.handleAdminClearLogs(w, r)
 	case "add_route":
@@ -600,6 +626,24 @@ func (g *Gateway) handleAdminSaveLogging(w http.ResponseWriter, r *http.Request)
 	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
 }
 
+func (g *Gateway) handleAdminSaveLoadBalancer(w http.ResponseWriter, r *http.Request) {
+	config, err := loadBalancerConfigFromForm(r, g.currentConfig())
+	if err != nil {
+		config.ActiveTab = "settings"
+		g.renderAdminForm(w, config, "", err.Error())
+		return
+	}
+
+	if err := g.saveConfig(config); err != nil {
+		config.ActiveTab = "settings"
+		g.renderAdminForm(w, config, "", err.Error())
+		return
+	}
+
+	tab := normalizeAdminTab(r.URL.Query().Get("tab"))
+	http.Redirect(w, r, "/?tab="+tab, http.StatusSeeOther)
+}
+
 func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
 	config := g.currentConfig()
 	route, err := routeFromForm(r)
@@ -666,7 +710,7 @@ func (g *Gateway) saveConfig(config Config) error {
 		return err
 	}
 
-	if err := g.store.SaveSettings(config.Admin.Username, config.Admin.Password, config.LogLimit); err != nil {
+	if err := g.store.SaveSettings(config); err != nil {
 		return errors.New("could not save config")
 	}
 
@@ -711,21 +755,29 @@ func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageDat
 	}
 
 	data := adminPageData{
-		AdminUsername:   config.Admin.Username,
-		AdminPassword:   config.Admin.Password,
-		LogLimit:        config.LogLimit,
-		Policies:        policies,
-		Routes:          routes,
-		ActiveTab:       normalizeAdminTab(activeTab),
-		OpenRoutes:      openRoutes,
-		ProtectedRoutes: protectedRoutes,
-		RouteKeyCount:   routeKeyCount,
-		Logs:            logs,
-		LogStats:        stats,
-		RouteStats:      routeStats,
-		Uptime:          formatUptime(time.Since(g.startedAt)),
-		Message:         message,
-		Error:           errText,
+		AdminUsername:         config.Admin.Username,
+		AdminPassword:         config.Admin.Password,
+		LogLimit:              config.LogLimit,
+		LoadBalancerMode:      config.LoadBalancer.Mode,
+		LoadBalancerHeader:    config.LoadBalancer.ClientIPHeader,
+		LoadBalancerHeaders:   strings.Join(clientIPHeaderChain(config.LoadBalancer), " → "),
+		LoadBalancerStripPort: config.LoadBalancer.StripPort,
+		GatewayListen:         g.listenAddr,
+		AdminListen:           g.adminListen,
+		GatewayHealthPath:     "/health",
+		AdminHealthPath:       "/health",
+		Policies:              policies,
+		Routes:                routes,
+		ActiveTab:             normalizeAdminTab(activeTab),
+		OpenRoutes:            openRoutes,
+		ProtectedRoutes:       protectedRoutes,
+		RouteKeyCount:         routeKeyCount,
+		Logs:                  logs,
+		LogStats:              stats,
+		RouteStats:            routeStats,
+		Uptime:                formatUptime(time.Since(g.startedAt)),
+		Message:               message,
+		Error:                 errText,
 	}
 
 	return data
@@ -740,6 +792,10 @@ func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, message,
 	data.AdminUsername = config.Admin.Username
 	data.AdminPassword = config.Admin.Password
 	data.LogLimit = config.LogLimit
+	data.LoadBalancerMode = config.LoadBalancer.Mode
+	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader
+	data.LoadBalancerHeaders = strings.Join(clientIPHeaderChain(config.LoadBalancer), " → ")
+	data.LoadBalancerStripPort = config.LoadBalancer.StripPort
 	data.Policies = make([]Policy, len(config.Policies))
 	copy(data.Policies, config.Policies)
 	data.Routes = make([]Route, len(config.Routes))
@@ -791,10 +847,7 @@ func summarizeLogs(logs []requestLog) (logStats, []routeStat) {
 	var totalDuration time.Duration
 
 	for _, entry := range logs {
-		name := entry.Route
-		if name == "" {
-			name = "unknown"
-		}
+		name, _ := routeStatName(entry)
 		routeCounts[name]++
 
 		switch {
@@ -815,6 +868,7 @@ func summarizeLogs(logs []requestLog) (logStats, []routeStat) {
 	stats.UniqueRoutes = len(routeCounts)
 	if stats.Total > 0 {
 		stats.Average = totalDuration / time.Duration(stats.Total)
+		stats.ErrorRate = float64(stats.Errors+stats.Unauthorized) / float64(stats.Total) * 100
 	}
 
 	routeStats := make([]routeStat, 0, len(routeCounts))
@@ -839,38 +893,25 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	route, ok := g.matchRoute(r.URL.Path)
 	if !ok {
+		g.recordRequest(r, "", http.StatusNotFound, 0)
 		http.NotFound(w, r)
 		return
 	}
 
 	if route.RequireAPIKey && !g.authorizeAPIKey(route, r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		g.store.AddLog(requestLog{
-			Time:       time.Now(),
-			Method:     r.Method,
-			Path:       r.URL.Path,
-			Status:     http.StatusUnauthorized,
-			Route:      route.Name,
-			RemoteAddr: r.RemoteAddr,
-		})
+		g.recordRequest(r, route.Name, http.StatusUnauthorized, 0)
 		return
 	}
 
 	if applyCORSPreflight(route.policy, w, r) {
-		g.store.AddLog(requestLog{Time: time.Now(), Method: r.Method, Path: r.URL.Path, Status: http.StatusNoContent, Route: route.Name, RemoteAddr: r.RemoteAddr})
+		g.recordRequest(r, route.Name, http.StatusNoContent, 0)
 		return
 	}
 
 	if ok, status, message := g.authorizePolicy(route, r); !ok {
 		http.Error(w, message, status)
-		g.store.AddLog(requestLog{
-			Time:       time.Now(),
-			Method:     r.Method,
-			Path:       r.URL.Path,
-			Status:     status,
-			Route:      route.Name,
-			RemoteAddr: r.RemoteAddr,
-		})
+		g.recordRequest(r, route.Name, status, 0)
 		return
 	}
 
@@ -880,14 +921,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if cached, ok := g.cachedPolicyResponse(route, r); ok {
 		w.Header().Set("X-Waiteway-Cache", "HIT")
 		writeCachedResponse(w, cached)
-		g.store.AddLog(requestLog{
-			Time:       time.Now(),
-			Method:     r.Method,
-			Path:       r.URL.Path,
-			Status:     cached.status,
-			Route:      route.Name,
-			RemoteAddr: r.RemoteAddr,
-		})
+		g.recordRequest(r, route.Name, cached.status, 0)
 		return
 	}
 
@@ -912,15 +946,144 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 			route.policy.circuitBreaker.RecordSuccess()
 		}
 	}
-	g.store.AddLog(requestLog{
+	g.recordRequest(r, route.Name, recorder.status, time.Since(start))
+}
+
+func (g *Gateway) recordRequest(r *http.Request, routeName string, status int, duration time.Duration) {
+	entry := requestLog{
 		Time:       time.Now(),
 		Method:     r.Method,
 		Path:       r.URL.Path,
-		Status:     recorder.status,
-		Route:      route.Name,
-		RemoteAddr: r.RemoteAddr,
-		Duration:   time.Since(start),
-	})
+		Status:     status,
+		Route:      routeName,
+		RemoteAddr: g.clientIP(r),
+		Duration:   duration,
+	}
+
+	if err := g.store.AddLog(entry); err != nil {
+		log.Printf("waiteway failed to store request log: %v", err)
+	}
+
+	log.Printf("request method=%s path=%s route=%s status=%d ip=%s duration=%s", entry.Method, entry.Path, entry.Route, entry.Status, entry.RemoteAddr, entry.Duration)
+}
+
+func (g *Gateway) clientIP(r *http.Request) string {
+	config := g.currentConfig().LoadBalancer
+	for _, candidate := range requestIPCandidates(r, config) {
+		if ip := normalizeClientIP(candidate, config.StripPort); ip != "" {
+			return ip
+		}
+	}
+
+	if ip := normalizeClientIP(r.RemoteAddr, config.StripPort); ip != "" {
+		return ip
+	}
+
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func clientIPHeaderChain(config LoadBalancerConfig) []string {
+	config = normalizeLoadBalancerConfig(config)
+
+	switch config.Mode {
+	case "cloudflare":
+		return []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP", "Forwarded", "RemoteAddr"}
+	case "standard":
+		return []string{"X-Forwarded-For", "X-Real-IP", "Forwarded", "RemoteAddr"}
+	case "custom":
+		chain := []string{}
+		if config.ClientIPHeader != "" {
+			chain = append(chain, config.ClientIPHeader)
+		}
+		for _, header := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded", "RemoteAddr"} {
+			if !strings.EqualFold(header, config.ClientIPHeader) {
+				chain = append(chain, header)
+			}
+		}
+		return chain
+	default:
+		return []string{"RemoteAddr"}
+	}
+}
+
+func requestIPCandidates(r *http.Request, config LoadBalancerConfig) []string {
+	var ips []string
+
+	for _, name := range clientIPHeaderChain(config) {
+		switch name {
+		case "RemoteAddr":
+			continue
+		case "X-Forwarded-For":
+			for _, part := range strings.Split(r.Header.Get(name), ",") {
+				if ip := cleanForwardedIP(part); ip != "" {
+					ips = append(ips, ip)
+				}
+			}
+		case "Forwarded":
+			for _, entry := range strings.Split(r.Header.Get(name), ",") {
+				for _, part := range strings.Split(entry, ";") {
+					key, value, ok := strings.Cut(part, "=")
+					if !ok || !strings.EqualFold(strings.TrimSpace(key), "for") {
+						continue
+					}
+					if ip := cleanForwardedIP(value); ip != "" {
+						ips = append(ips, ip)
+					}
+				}
+			}
+		default:
+			if ip := cleanForwardedIP(r.Header.Get(name)); ip != "" {
+				ips = append(ips, ip)
+			}
+		}
+	}
+
+	return ips
+}
+
+func normalizeClientIP(value string, stripPort bool) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"`)
+	if value == "" || strings.EqualFold(value, "unknown") {
+		return ""
+	}
+
+	if !stripPort {
+		return value
+	}
+
+	if ip := cleanForwardedIP(value); ip != "" {
+		if addr, err := netip.ParseAddr(ip); err == nil {
+			return addr.String()
+		}
+		return ip
+	}
+
+	if addr, err := remoteIP(value); err == nil {
+		return addr.String()
+	}
+
+	return value
+}
+
+func cleanForwardedIP(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"`)
+	if value == "" || strings.EqualFold(value, "unknown") {
+		return ""
+	}
+
+	if strings.HasPrefix(value, "[") {
+		if addr, err := netip.ParseAddrPort(value); err == nil {
+			return addr.Addr().String()
+		}
+	}
+
+	if host, _, err := strings.Cut(value, ":"); err && strings.Count(value, ":") == 1 {
+		return strings.TrimSpace(host)
+	}
+
+	return strings.Trim(value, "[]")
 }
 
 func (g *Gateway) authorizeAPIKey(route compiledRoute, r *http.Request) bool {
@@ -954,12 +1117,35 @@ func (g *Gateway) matchRoute(path string) (compiledRoute, bool) {
 	defer g.mu.RUnlock()
 
 	for _, route := range g.routes {
-		if strings.HasPrefix(path, route.PathPrefix) {
+		if routeMatchesPath(route.PathPrefix, path) {
 			return route, true
 		}
 	}
 
 	return compiledRoute{}, false
+}
+
+func routeMatchesPath(prefix, path string) bool {
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	if path == prefix {
+		return true
+	}
+	if prefix == "/" {
+		return true
+	}
+	return strings.HasSuffix(prefix, "/") || strings.HasPrefix(path[len(prefix):], "/")
+}
+
+func routeStatName(entry requestLog) (string, bool) {
+	name := strings.TrimSpace(entry.Path)
+	name = strings.TrimPrefix(name, "/")
+	if name == "" {
+		name = "root"
+	}
+
+	return name, strings.TrimSpace(entry.Route) != ""
 }
 
 func (g *Gateway) currentConfig() Config {
@@ -998,6 +1184,7 @@ func normalizeConfig(config Config) (Config, error) {
 	if config.LogLimit <= 0 {
 		config.LogLimit = 100
 	}
+	config.LoadBalancer = normalizeLoadBalancerConfig(config.LoadBalancer)
 	if len(config.Routes) == 0 {
 		return Config{}, errors.New("config needs at least one route")
 	}
@@ -1017,6 +1204,26 @@ func normalizeConfig(config Config) (Config, error) {
 	return config, nil
 }
 
+func normalizeLoadBalancerConfig(config LoadBalancerConfig) LoadBalancerConfig {
+	mode := strings.ToLower(strings.TrimSpace(config.Mode))
+	switch mode {
+	case "", "direct", "standard", "cloudflare", "custom":
+	default:
+		mode = "direct"
+	}
+	if mode == "" {
+		mode = "direct"
+	}
+
+	config.Mode = mode
+	config.ClientIPHeader = strings.TrimSpace(config.ClientIPHeader)
+	if mode != "custom" {
+		config.ClientIPHeader = ""
+	}
+
+	return config
+}
+
 func settingsConfigFromForm(r *http.Request, current Config) (Config, error) {
 	username := strings.TrimSpace(r.FormValue("admin_username"))
 	if username == "" {
@@ -1028,8 +1235,10 @@ func settingsConfigFromForm(r *http.Request, current Config) (Config, error) {
 			Username: username,
 			Password: current.Admin.Password,
 		},
-		LogLimit: current.LogLimit,
-		Routes:   current.Routes,
+		LogLimit:     current.LogLimit,
+		LoadBalancer: current.LoadBalancer,
+		Policies:     current.Policies,
+		Routes:       current.Routes,
 	}
 
 	return config, nil
@@ -1047,6 +1256,20 @@ func loggingConfigFromForm(r *http.Request, current Config) (Config, error) {
 	}
 
 	current.LogLimit = logLimit
+	return current, nil
+}
+
+func loadBalancerConfigFromForm(r *http.Request, current Config) (Config, error) {
+	current.LoadBalancer = normalizeLoadBalancerConfig(LoadBalancerConfig{
+		Mode:           r.FormValue("load_balancer_mode"),
+		ClientIPHeader: r.FormValue("load_balancer_client_ip_header"),
+		StripPort:      r.FormValue("load_balancer_strip_port") != "false",
+	})
+
+	if current.LoadBalancer.Mode == "custom" && current.LoadBalancer.ClientIPHeader == "" {
+		return current, errors.New("client ip header is required for custom mode")
+	}
+
 	return current, nil
 }
 
@@ -1252,6 +1475,17 @@ func formatDurationMS(d time.Duration) string {
 	return fmt.Sprintf("%.3fms", ms)
 }
 
+func formatClientIP(value string, stripPort bool) string {
+	if ip := normalizeClientIP(value, stripPort); ip != "" {
+		return ip
+	}
+	return strings.TrimSpace(value)
+}
+
+func formatPercent(value float64) string {
+	return fmt.Sprintf("%.0f%%", value)
+}
+
 func formatUptime(d time.Duration) string {
 	d = d.Round(time.Second)
 	days := int(d.Hours()) / 24
@@ -1326,13 +1560,12 @@ const adminTemplate = `<!doctype html>
     .settings-row label { flex-shrink: 0; width: 70px; }
     .settings-panel select { width: 100%; box-sizing: border-box; }
     .settings-panel button { margin-top: 4px; }
-    .logging-layout { display: grid; grid-template-columns: 240px 1fr; gap: 24px; align-items: stretch; min-height: 500px; }
-    .logging-sidebar { display: flex; flex-direction: column; gap: 16px; height: 500px; }
-    .stats-grid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 0; flex: 1; }
+    .logging-layout { display: flex; flex-direction: column; gap: 24px; min-height: 500px; }
+    .stats-grid { display: grid; grid-template-columns: 1.1fr repeat(4, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
     .stat-card { border: 1px solid #000; padding: 10px 12px; min-height: 0; }
     .stat-label { font-size: 0.75rem; opacity: 0.7; margin-bottom: 4px; }
     .stat-value { font-size: 1rem; }
-    .route-stats { border: 1px solid #000; padding: 16px; }
+    .route-stats { border: 1px solid #000; padding: 10px 12px; min-height: 0; grid-row: span 2; }
     .route-stats-list { max-height: 96px; overflow-y: auto; }
     .route-stats ul { list-style: none; margin: 0; }
     .route-stats li { display: flex; align-items: center; gap: 8px; }
@@ -1340,7 +1573,7 @@ const adminTemplate = `<!doctype html>
     .route-stat-name { flex: 1; min-width: 0; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
     .route-stat-name::-webkit-scrollbar { display: none; }
     .route-stat-count { flex-shrink: 0; }
-    .log-panel { min-height: 500px; height: 500px; }
+    .log-panel { min-height: 0; height: 520px; }
     .log-table-wrap { overflow-y: auto; overflow-x: hidden; height: 100%; max-height: none; }
     .user-list-panel { border: 1px solid #000; display: flex; flex-direction: column; min-height: 500px; }
     .user-list-panel h3 { padding: 16px 20px 0 20px; margin-bottom: 16px; border-bottom: 1px solid #000; padding-bottom: 12px; flex-shrink: 0; }
@@ -1353,11 +1586,13 @@ const adminTemplate = `<!doctype html>
     .routes-table th:nth-child(3), .routes-table td:nth-child(3) { width: 28%; padding-right: 12px; }
     .routes-table th:nth-child(4), .routes-table td:nth-child(4) { width: 12%; padding-right: 12px; }
     .routes-table th:nth-child(5), .routes-table td:nth-child(5) { width: 20%; }
-    .logs-table th:nth-child(1), .logs-table td:nth-child(1) { width: 20%; padding-right: 12px; }
-    .logs-table th:nth-child(2), .logs-table td:nth-child(2) { width: 20%; padding-right: 12px; }
-    .logs-table th:nth-child(3), .logs-table td:nth-child(3) { width: 34%; padding-right: 12px; overflow: hidden; }
-    .logs-table th:nth-child(4), .logs-table td:nth-child(4) { width: 10%; padding-right: 12px; }
-    .logs-table th:nth-child(5), .logs-table td:nth-child(5) { width: 16%; }
+    .logs-table th:nth-child(1), .logs-table td:nth-child(1) { width: 12%; padding-right: 12px; }
+    .logs-table th:nth-child(2), .logs-table td:nth-child(2) { width: 18%; padding-right: 12px; }
+    .logs-table th:nth-child(3), .logs-table td:nth-child(3) { width: 14%; padding-right: 12px; }
+    .logs-table th:nth-child(4), .logs-table td:nth-child(4) { width: 34%; padding-right: 12px; overflow: hidden; }
+    .logs-table th:nth-child(5), .logs-table td:nth-child(5) { width: 10%; padding-right: 12px; }
+    .logs-table th:nth-child(6), .logs-table td:nth-child(6) { width: 12%; }
+    .logs-table th:nth-child(5), .logs-table td:nth-child(5), .logs-table th:nth-child(6), .logs-table td:nth-child(6) { text-align: right; }
     .scroll-cell { display: block; max-width: 100%; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
     .scroll-cell::-webkit-scrollbar { display: none; }
     .request-scroll { display: block; width: 100%; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch; }
@@ -1388,6 +1623,7 @@ const adminTemplate = `<!doctype html>
     .policy-add-option { width: 100%; text-align: left; padding: 12px; border: 1px solid #000; background: #fff; display: flex; flex-direction: column; gap: 4px; }
     .policy-add-option small { opacity: 0.7; }
     @media (max-width: 700px) {
+      .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .policy-modal-box { width: 92vw; }
       .policy-field-grid { grid-template-columns: minmax(0, 1fr); }
       .policy-builder-actions { flex-direction: column; align-items: stretch; }
@@ -1490,7 +1726,7 @@ const adminTemplate = `<!doctype html>
 
       <section id="logging-tab" class="tab-panel {{ if eq .ActiveTab "logging" }}active{{ end }}">
         <div class="logging-layout">
-          <div class="logging-sidebar">
+          <div class="stats-grid">
             <div class="route-stats">
               <h3>top routes</h3>
               <div class="route-stats-list">
@@ -1503,47 +1739,48 @@ const adminTemplate = `<!doctype html>
                 </ul>
               </div>
             </div>
-            <div class="stats-grid">
-              <div class="stat-card"><div class="stat-label">recent requests</div><div class="stat-value">{{ .LogStats.Total }}</div></div>
-              <div class="stat-card"><div class="stat-label">errors</div><div class="stat-value">{{ .LogStats.Errors }}</div></div>
-              <div class="stat-card"><div class="stat-label">unauthorized</div><div class="stat-value">{{ .LogStats.Unauthorized }}</div></div>
-              <div class="stat-card"><div class="stat-label">successful</div><div class="stat-value">{{ .LogStats.Success }}</div></div>
-              <div class="stat-card"><div class="stat-label">avg duration</div><div class="stat-value">{{ .LogStats.Average }}</div></div>
-              <div class="stat-card"><div class="stat-label">slowest</div><div class="stat-value">{{ .LogStats.Slowest }}</div></div>
-            </div>
+            <div class="stat-card"><div class="stat-label">recent requests</div><div class="stat-value">{{ .LogStats.Total }}</div></div>
+            <div class="stat-card"><div class="stat-label">errors</div><div class="stat-value">{{ .LogStats.Errors }}</div></div>
+            <div class="stat-card"><div class="stat-label">unauthorized</div><div class="stat-value">{{ .LogStats.Unauthorized }}</div></div>
+            <div class="stat-card"><div class="stat-label">successful</div><div class="stat-value">{{ .LogStats.Success }}</div></div>
+            <div class="stat-card"><div class="stat-label">unique routes</div><div class="stat-value">{{ .LogStats.UniqueRoutes }}</div></div>
+            <div class="stat-card"><div class="stat-label">error rate</div><div class="stat-value">{{ formatPercent .LogStats.ErrorRate }}</div></div>
+            <div class="stat-card"><div class="stat-label">avg duration</div><div class="stat-value">{{ formatDurationMS .LogStats.Average }}</div></div>
+            <div class="stat-card"><div class="stat-label">slowest</div><div class="stat-value">{{ formatDurationMS .LogStats.Slowest }}</div></div>
           </div>
-          <div>
-            <div class="user-list-panel log-panel">
+
+          <div class="user-list-panel log-panel">
             <h3>recent requests</h3>
             <div class="panel-body log-panel-body">
               <div class="log-table-wrap">
-              <table class="logs-table">
-                <thead>
-                  <tr>
-                    <th>time</th>
-                    <th>route</th>
-                    <th>request</th>
-                    <th>status</th>
-                    <th>duration</th>
+				  <table class="logs-table">
+				    <thead>
+				      <tr>
+				        <th>time</th>
+				        <th>ip</th>
+				        <th>route</th>
+				        <th>request</th>
+				        <th>status</th>
+				        <th>duration</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {{ range .Logs }}
-                  <tr>
-                    <td>{{ .Time.Format "15:04:05" }}</td>
-                    <td><span class="scroll-cell">{{ .Route }}</span></td>
-                    <td><span class="request-scroll">{{ .Method }} {{ .Path }}</span></td>
-                    <td>{{ .Status }}</td>
-                    <td>{{ formatDurationMS .Duration }}</td>
-                  </tr>
-                  {{ else }}
-                  <tr><td colspan="5" class="muted">no requests yet</td></tr>
-                {{ end }}
+				      {{ range .Logs }}
+				      <tr>
+				        <td>{{ .Time.Format "15:04:05" }}</td>
+				        <td><span class="scroll-cell">{{ formatClientIP .RemoteAddr $.LoadBalancerStripPort }}</span></td>
+				        <td><span class="scroll-cell">{{ .Route }}</span></td>
+				        <td><span class="request-scroll">{{ .Method }} {{ .Path }}</span></td>
+				        <td>{{ .Status }}</td>
+				        <td>{{ formatDurationMS .Duration }}</td>
+				      </tr>
+				      {{ else }}
+				      <tr><td colspan="6" class="muted">no requests yet</td></tr>
+				    {{ end }}
               </tbody>
               </table>
               </div>
             </div>
-          </div>
           </div>
         </div>
       </section>
@@ -1565,38 +1802,111 @@ const adminTemplate = `<!doctype html>
             </form>
           </div>
 
-          <div class="user-list-panel" style="min-height: 0; height: auto;">
-            <h3>gateway config</h3>
-            <div class="panel-body">
-              <table class="config-table">
-                <tbody>
-                  <tr>
-                    <td><strong>log limit</strong></td>
-                    <td>{{ .LogLimit }}</td>
-                    <td><button type="button" onclick="openSettingsModal('log_limit', '{{ .LogLimit }}')">edit</button></td>
-                  </tr>
-                  <tr>
-                    <td><strong>routes</strong></td>
-                    <td>{{ len .Routes }} ({{ .ProtectedRoutes }} using policy, {{ .OpenRoutes }} open)</td>
-                    <td></td>
-                  </tr>
-                  <tr>
-                    <td><strong>policies</strong></td>
-                    <td>{{ len .Policies }}</td>
-                    <td></td>
-                  </tr>
-                  <tr>
-                    <td><strong>uptime</strong></td>
-                    <td>{{ .Uptime }}</td>
-                    <td></td>
-                  </tr>
-                </tbody>
-              </table>
-              <div style="margin-top: 16px">
-                <form method="post" action="/?tab=settings" style="display:inline">
-                  <input type="hidden" name="action" value="clear_logs">
-                  <button type="submit">clear logs</button>
+          <div class="settings-right">
+            <div class="user-list-panel" style="min-height: 0; height: auto;">
+              <h3>load balancer</h3>
+              <div class="panel-body">
+                <form method="post" action="/?tab=settings" style="display: flex; flex-direction: column; gap: 16px;">
+                  <input type="hidden" name="action" value="save_load_balancer">
+                  <table class="config-table">
+                    <tbody>
+                      <tr>
+                        <td><strong>mode</strong></td>
+                        <td>
+                          <select id="load-balancer-mode" name="load_balancer_mode" onchange="toggleLoadBalancerHeader()">
+                            <option value="direct" {{ if eq .LoadBalancerMode "direct" }}selected{{ end }}>direct</option>
+                            <option value="standard" {{ if eq .LoadBalancerMode "standard" }}selected{{ end }}>standard</option>
+                            <option value="cloudflare" {{ if eq .LoadBalancerMode "cloudflare" }}selected{{ end }}>cloudflare</option>
+                            <option value="custom" {{ if eq .LoadBalancerMode "custom" }}selected{{ end }}>custom</option>
+                          </select>
+                        </td>
+                        <td></td>
+                      </tr>
+                      <tr id="load-balancer-header-row" {{ if ne .LoadBalancerMode "custom" }}style="display:none"{{ end }}>
+                        <td><strong>client ip header</strong></td>
+                        <td><input id="load-balancer-header" type="text" name="load_balancer_client_ip_header" value="{{ .LoadBalancerHeader }}"></td>
+                        <td></td>
+                      </tr>
+                      <tr>
+                        <td><strong>strip port from ip</strong></td>
+                        <td>
+                          <select id="load-balancer-strip-port" name="load_balancer_strip_port">
+                            <option value="true" {{ if .LoadBalancerStripPort }}selected{{ end }}>yes</option>
+                            <option value="false" {{ if not .LoadBalancerStripPort }}selected{{ end }}>no</option>
+                          </select>
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <button type="submit">save load balancer</button>
                 </form>
+
+                <table class="config-table" style="margin-top: 16px;">
+                  <tbody>
+                    <tr>
+                      <td><strong>header order</strong></td>
+                      <td>{{ .LoadBalancerHeaders }}</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>gateway listen</strong></td>
+                      <td>{{ .GatewayListen }}</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>gateway health</strong></td>
+                      <td>{{ .GatewayListen }}{{ .GatewayHealthPath }}</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>admin listen</strong></td>
+                      <td>{{ .AdminListen }}</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>admin health</strong></td>
+                      <td>{{ .AdminListen }}{{ .AdminHealthPath }}</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="user-list-panel" style="min-height: 0; height: auto;">
+              <h3>gateway config</h3>
+              <div class="panel-body">
+                <table class="config-table">
+                  <tbody>
+                    <tr>
+                      <td><strong>log limit</strong></td>
+                      <td>{{ .LogLimit }}</td>
+                      <td><button type="button" onclick="openSettingsModal('log_limit', '{{ .LogLimit }}')">edit</button></td>
+                    </tr>
+                    <tr>
+                      <td><strong>routes</strong></td>
+                      <td>{{ len .Routes }} ({{ .ProtectedRoutes }} using policy, {{ .OpenRoutes }} open)</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>policies</strong></td>
+                      <td>{{ len .Policies }}</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>uptime</strong></td>
+                      <td>{{ .Uptime }}</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div style="margin-top: 16px">
+                  <form method="post" action="/?tab=settings" style="display:inline">
+                    <input type="hidden" name="action" value="clear_logs">
+                    <button type="submit">clear logs</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -2126,6 +2436,13 @@ const adminTemplate = `<!doctype html>
       document.getElementById('settings-modal').classList.add('hidden')
     }
 
+    function toggleLoadBalancerHeader() {
+      var mode = document.getElementById('load-balancer-mode')
+      var row = document.getElementById('load-balancer-header-row')
+      if (!mode || !row) return
+      row.style.display = mode.value === 'custom' ? 'table-row' : 'none'
+    }
+
     function showTab(name, button) {
       document.querySelectorAll('.tab-btn').forEach((button) => button.classList.remove('active'))
       document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'))
@@ -2165,6 +2482,8 @@ const adminTemplate = `<!doctype html>
     function closeRouteModal() {
       document.getElementById('route-modal').classList.add('hidden')
     }
+
+    toggleLoadBalancerHeader()
 
     function openAddPolicy() {
       document.getElementById('policy-modal-title').textContent = 'add policy'

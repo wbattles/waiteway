@@ -168,6 +168,11 @@ func (s *Store) LoadConfig() (Config, error) {
 			Username: s.GetSetting("admin_username", "admin"),
 			Password: s.GetSetting("admin_password", "change-me"),
 		},
+		LoadBalancer: LoadBalancerConfig{
+			Mode:           s.GetSetting("load_balancer_mode", "direct"),
+			ClientIPHeader: s.GetSetting("load_balancer_client_ip_header", ""),
+			StripPort:      s.GetSetting("load_balancer_strip_port", "true") != "false",
+		},
 	}
 
 	if v := s.GetSetting("log_limit", "100"); v != "" {
@@ -189,7 +194,7 @@ func (s *Store) LoadConfig() (Config, error) {
 	return config, nil
 }
 
-func (s *Store) SaveSettings(username, password string, logLimit int) error {
+func (s *Store) SaveSettings(config Config) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -197,9 +202,12 @@ func (s *Store) SaveSettings(username, password string, logLimit int) error {
 	defer tx.Rollback()
 
 	for _, kv := range [][2]string{
-		{"admin_username", username},
-		{"admin_password", password},
-		{"log_limit", fmt.Sprintf("%d", logLimit)},
+		{"admin_username", config.Admin.Username},
+		{"admin_password", config.Admin.Password},
+		{"log_limit", fmt.Sprintf("%d", config.LogLimit)},
+		{"load_balancer_mode", config.LoadBalancer.Mode},
+		{"load_balancer_client_ip_header", config.LoadBalancer.ClientIPHeader},
+		{"load_balancer_strip_port", fmt.Sprintf("%t", config.LoadBalancer.StripPort)},
 	} {
 		if _, err := tx.Exec(
 			"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
