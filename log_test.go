@@ -103,9 +103,9 @@ func TestGatewayRecordRequestIsNonBlocking(t *testing.T) {
 	t.Cleanup(gw.Close)
 
 	// Stop the drainer so logCh fills up, then verify recordRequest still
-	// returns quickly (the drop-on-full path).
-	close(gw.stopCh)
-	<-gw.doneCh
+	// returns quickly (the drop-on-full path). Close() is idempotent, so the
+	// t.Cleanup above safely becomes a no-op.
+	gw.Close()
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	done := make(chan struct{})
