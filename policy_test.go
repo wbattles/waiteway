@@ -41,6 +41,9 @@ func testGateway(t *testing.T, upstream *httptest.Server, policy Policy) *httpte
 	if err != nil {
 		t.Fatal(err)
 	}
+	// registered after store.Close so it runs first (LIFO cleanup order),
+	// ensuring the log drainer stops before the store is closed
+	t.Cleanup(gw.Close)
 
 	return httptest.NewServer(gw.gatewayHandler())
 }
