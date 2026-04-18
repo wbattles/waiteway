@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -596,6 +594,4 @@ func TestPolicyMultipleFeatures(t *testing.T) {
 	}
 }
 
-// suppress unused import warnings
-var _ = net.SplitHostPort
-var _ = bytes.NewReader
+

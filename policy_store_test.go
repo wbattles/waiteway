@@ -142,3 +142,28 @@ func TestCompilePolicyNormalizesRewritePathPrefix(t *testing.T) {
 		t.Errorf("expected normalized rewrite prefix /api, got %q", compiled.RewritePathPrefix)
 	}
 }
+
+func TestStoreDeleteAllSessions(t *testing.T) {
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	if err := store.AddSession("one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddSession("two"); err != nil {
+		t.Fatal(err)
+	}
+	if !store.HasSession("one") || !store.HasSession("two") {
+		t.Fatal("expected both sessions to exist before delete")
+	}
+
+	if err := store.DeleteAllSessions(); err != nil {
+		t.Fatal(err)
+	}
+	if store.HasSession("one") || store.HasSession("two") {
+		t.Fatal("expected all sessions to be gone after DeleteAllSessions")
+	}
+}

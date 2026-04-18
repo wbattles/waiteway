@@ -493,6 +493,11 @@ func (s *Store) DeleteSession(id string) error {
 	return err
 }
 
+func (s *Store) DeleteAllSessions() error {
+	_, err := s.db.Exec("DELETE FROM sessions")
+	return err
+}
+
 func (s *Store) HasRoutes() bool {
 	var count int
 	s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count)

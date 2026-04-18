@@ -6,7 +6,7 @@ import (
 )
 
 func TestCompileConfigRejectsDuplicateRoutePathPrefixes(t *testing.T) {
-	_, _, _, err := compileConfig(Config{
+	_, _, err := compileConfig(Config{
 		Routes: []Route{
 			{Name: "first", PathPrefix: "/example", Target: "https://example.com"},
 			{Name: "second", PathPrefix: "/example", Target: "https://other-example.com"},
@@ -122,7 +122,7 @@ func TestStoreUniqueIndexRejectsDuplicatePathPrefix(t *testing.T) {
 }
 
 func TestCompileConfigNormalizesBeforeDuplicateCheck(t *testing.T) {
-	_, _, _, err := compileConfig(Config{
+	_, _, err := compileConfig(Config{
 		Routes: []Route{
 			{Name: "first", PathPrefix: "/example", Target: "https://example.com"},
 			{Name: "second", PathPrefix: "/example/", Target: "https://other-example.com"},

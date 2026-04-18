@@ -56,7 +56,6 @@ type Gateway struct {
 	config      Config
 	policies    map[string]*compiledPolicy
 	routes      []compiledRoute
-	apiKeys     map[string]struct{}
 	tmpl        *template.Template
 	loginTmpl   *template.Template
 	startedAt   time.Time
@@ -108,7 +107,6 @@ type adminPageData struct {
 	ActiveTab             string
 	OpenRoutes            int
 	ProtectedRoutes       int
-	RouteKeyCount         int
 	Logs                  []requestLog
 	LogStats              logStats
 	RouteStats            []routeStat
@@ -262,7 +260,7 @@ func (g *Gateway) Close() {
 
 func (g *Gateway) applyConfig(config Config) error {
 	config.LoadBalancer = normalizeLoadBalancerConfig(config.LoadBalancer)
-	routes, policies, apiKeys, err := compileConfig(config)
+	routes, policies, err := compileConfig(config)
 	if err != nil {
 		return err
 	}
@@ -273,19 +271,17 @@ func (g *Gateway) applyConfig(config Config) error {
 	g.config = config
 	g.policies = policies
 	g.routes = routes
-	g.apiKeys = apiKeys
 	return nil
 }
 
-func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, map[string]struct{}, error) {
-	apiKeys := make(map[string]struct{})
+func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, error) {
 	policies := make(map[string]*compiledPolicy, len(config.Policies))
 	seenPrefixes := make(map[string]string, len(config.Routes))
 
 	for _, policy := range config.Policies {
 		compiled, err := compilePolicy(policy)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("compile policy %q: %w", policy.Name, err)
+			return nil, nil, fmt.Errorf("compile policy %q: %w", policy.Name, err)
 		}
 		policies[policy.Name] = compiled
 	}
@@ -294,16 +290,16 @@ func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, 
 	for _, route := range config.Routes {
 		route.PathPrefix = normalizePathPrefix(route.PathPrefix)
 		if route.PathPrefix == "" || route.Target == "" {
-			return nil, nil, nil, errors.New("every route needs path_prefix and target")
+			return nil, nil, errors.New("every route needs path_prefix and target")
 		}
 		if existingName, ok := seenPrefixes[route.PathPrefix]; ok {
-			return nil, nil, nil, fmt.Errorf("route path prefix %q is already in use (conflicts with route %q)", route.PathPrefix, existingName)
+			return nil, nil, fmt.Errorf("route path prefix %q is already in use (conflicts with route %q)", route.PathPrefix, existingName)
 		}
 		seenPrefixes[route.PathPrefix] = route.Name
 
 		targetURL, err := url.Parse(route.Target)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("parse target %q: %w", route.Target, err)
+			return nil, nil, fmt.Errorf("parse target %q: %w", route.Target, err)
 		}
 
 		routeAPIKeys := make(map[string]struct{}, len(route.APIKeys))
@@ -319,7 +315,7 @@ func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, 
 			var ok bool
 			policyRef, ok = policies[route.PolicyName]
 			if !ok {
-				return nil, nil, nil, fmt.Errorf("route %q uses unknown policy %q", route.Name, route.PolicyName)
+				return nil, nil, fmt.Errorf("route %q uses unknown policy %q", route.Name, route.PolicyName)
 			}
 		}
 
@@ -337,7 +333,7 @@ func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, 
 		return len(routes[i].PathPrefix) > len(routes[j].PathPrefix)
 	})
 
-	return routes, policies, apiKeys, nil
+	return routes, policies, nil
 }
 
 func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *httputil.ReverseProxy {
@@ -630,7 +626,13 @@ func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
+	// New password invalidates every existing session so old cookies
+	// cannot be reused. The admin will be sent back to the login page.
+	if err := g.store.DeleteAllSessions(); err != nil {
+		log.Printf("clear sessions after password change failed: %v", err)
+	}
+
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminSaveLogging(w http.ResponseWriter, r *http.Request) {
@@ -689,7 +691,7 @@ func (g *Gateway) saveConfig(config Config) error {
 	if err != nil {
 		return err
 	}
-	if _, _, _, err := compileConfig(config); err != nil {
+	if _, _, err := compileConfig(config); err != nil {
 		return err
 	}
 
@@ -773,19 +775,12 @@ func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageDat
 	stats, routeStats := summarizeLogs(logs)
 	openRoutes := 0
 	protectedRoutes := 0
-	routeKeyCount := 0
 	for _, route := range routes {
 		if route.PolicyName != "" || route.RequireAPIKey {
 			protectedRoutes++
 		} else {
 			openRoutes++
 		}
-		if route.PolicyName == "" {
-			routeKeyCount += len(route.APIKeys)
-		}
-	}
-	for _, policy := range policies {
-		routeKeyCount += len(policy.APIKeys)
 	}
 
 	data := adminPageData{
@@ -805,7 +800,6 @@ func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageDat
 		ActiveTab:             normalizeAdminTab(activeTab),
 		OpenRoutes:            openRoutes,
 		ProtectedRoutes:       protectedRoutes,
-		RouteKeyCount:         routeKeyCount,
 		Logs:                  logs,
 		LogStats:              stats,
 		RouteStats:            routeStats,
@@ -1167,10 +1161,6 @@ func cleanForwardedIP(value string) string {
 }
 
 func (g *Gateway) authorizeAPIKey(route compiledRoute, r *http.Request) bool {
-	g.mu.RLock()
-	apiKeys := g.apiKeys
-	g.mu.RUnlock()
-
 	key := r.Header.Get("X-API-Key")
 	if key == "" {
 		auth := r.Header.Get("Authorization")
@@ -1179,16 +1169,10 @@ func (g *Gateway) authorizeAPIKey(route compiledRoute, r *http.Request) bool {
 		}
 	}
 
-	if len(route.apiKeys) > 0 {
-		_, ok := route.apiKeys[key]
-		return ok
-	}
-
-	if len(apiKeys) == 0 {
+	if len(route.apiKeys) == 0 {
 		return false
 	}
-
-	_, ok := apiKeys[key]
+	_, ok := route.apiKeys[key]
 	return ok
 }
 
