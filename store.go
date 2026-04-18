@@ -135,6 +135,16 @@ func runMigrations(db *sql.DB) error {
 			return err
 		}
 	}
+
+	indexes := []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_path_prefix ON routes(path_prefix)",
+	}
+	for _, stmt := range indexes {
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -259,12 +269,42 @@ func (s *Store) getRouteID(index int) (int, error) {
 	return id, nil
 }
 
+func duplicateRoutePathPrefixError(prefix string) error {
+	return fmt.Errorf("route path prefix %q is already in use", prefix)
+}
+
+func routePathPrefixExistsTx(tx *sql.Tx, prefix string, excludeID int) (bool, error) {
+	query := "SELECT COUNT(*) FROM routes WHERE path_prefix = ?"
+	args := []any{prefix}
+	if excludeID > 0 {
+		query += " AND id != ?"
+		args = append(args, excludeID)
+	}
+
+	var count int
+	if err := tx.QueryRow(query, args...).Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
 func (s *Store) AddRoute(r Route) error {
+	r.PathPrefix = normalizePathPrefix(r.PathPrefix)
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+
+	exists, err := routePathPrefixExistsTx(tx, r.PathPrefix, 0)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return duplicateRoutePathPrefixError(r.PathPrefix)
+	}
 
 	var maxPos int
 	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM routes").Scan(&maxPos)
@@ -300,6 +340,8 @@ func (s *Store) AddRoute(r Route) error {
 }
 
 func (s *Store) UpdateRoute(index int, r Route) error {
+	r.PathPrefix = normalizePathPrefix(r.PathPrefix)
+
 	id, err := s.getRouteID(index)
 	if err != nil {
 		return err
@@ -310,6 +352,14 @@ func (s *Store) UpdateRoute(index int, r Route) error {
 		return err
 	}
 	defer tx.Rollback()
+
+	exists, err := routePathPrefixExistsTx(tx, r.PathPrefix, id)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return duplicateRoutePathPrefixError(r.PathPrefix)
+	}
 
 	reqKey := 0
 	if r.RequireAPIKey {
@@ -443,6 +493,11 @@ func (s *Store) DeleteSession(id string) error {
 	return err
 }
 
+func (s *Store) DeleteAllSessions() error {
+	_, err := s.db.Exec("DELETE FROM sessions")
+	return err
+}
+
 func (s *Store) HasRoutes() bool {
 	var count int
 	s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count)
@@ -543,12 +598,42 @@ func (s *Store) getPolicyID(index int) (int, error) {
 	return id, nil
 }
 
+func duplicatePolicyNameError(name string) error {
+	return fmt.Errorf("policy name %q is already in use", name)
+}
+
+func policyNameExistsTx(tx *sql.Tx, name string, excludeID int) (bool, error) {
+	query := "SELECT COUNT(*) FROM policies WHERE name = ?"
+	args := []any{name}
+	if excludeID > 0 {
+		query += " AND id != ?"
+		args = append(args, excludeID)
+	}
+
+	var count int
+	if err := tx.QueryRow(query, args...).Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
 func (s *Store) AddPolicy(policy Policy) error {
+	policy.RewritePathPrefix = normalizePathPrefix(policy.RewritePathPrefix)
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+
+	exists, err := policyNameExistsTx(tx, policy.Name, 0)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return duplicatePolicyNameError(policy.Name)
+	}
 
 	var maxPos int
 	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM policies").Scan(&maxPos)
@@ -600,6 +685,8 @@ func (s *Store) AddPolicy(policy Policy) error {
 }
 
 func (s *Store) UpdatePolicy(index int, policy Policy) error {
+	policy.RewritePathPrefix = normalizePathPrefix(policy.RewritePathPrefix)
+
 	id, err := s.getPolicyID(index)
 	if err != nil {
 		return err
@@ -610,6 +697,14 @@ func (s *Store) UpdatePolicy(index int, policy Policy) error {
 		return err
 	}
 	defer tx.Rollback()
+
+	exists, err := policyNameExistsTx(tx, policy.Name, id)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return duplicatePolicyNameError(policy.Name)
+	}
 
 	var oldName string
 	if err := tx.QueryRow("SELECT name FROM policies WHERE id = ?", id).Scan(&oldName); err != nil {

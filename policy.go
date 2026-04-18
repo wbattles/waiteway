@@ -103,6 +103,7 @@ type circuitBreaker struct {
 }
 
 func compilePolicy(policy Policy) (*compiledPolicy, error) {
+	policy.RewritePathPrefix = normalizePathPrefix(policy.RewritePathPrefix)
 	compiled := &compiledPolicy{
 		Policy:  policy,
 		apiKeys: make(map[string]struct{}, len(policy.APIKeys)),

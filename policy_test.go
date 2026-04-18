@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,6 +39,9 @@ func testGateway(t *testing.T, upstream *httptest.Server, policy Policy) *httpte
 	if err != nil {
 		t.Fatal(err)
 	}
+	// registered after store.Close so it runs first (LIFO cleanup order),
+	// ensuring the log drainer stops before the store is closed
+	t.Cleanup(gw.Close)
 
 	return httptest.NewServer(gw.gatewayHandler())
 }
@@ -593,6 +594,4 @@ func TestPolicyMultipleFeatures(t *testing.T) {
 	}
 }
 
-// suppress unused import warnings
-var _ = net.SplitHostPort
-var _ = bytes.NewReader
+

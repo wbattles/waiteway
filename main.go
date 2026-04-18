@@ -56,12 +56,15 @@ type Gateway struct {
 	config      Config
 	policies    map[string]*compiledPolicy
 	routes      []compiledRoute
-	apiKeys     map[string]struct{}
 	tmpl        *template.Template
 	loginTmpl   *template.Template
 	startedAt   time.Time
 	listenAddr  string
 	adminListen string
+
+	logCh  chan requestLog
+	stopCh chan struct{}
+	doneCh chan struct{}
 }
 
 type compiledRoute struct {
@@ -104,7 +107,6 @@ type adminPageData struct {
 	ActiveTab             string
 	OpenRoutes            int
 	ProtectedRoutes       int
-	RouteKeyCount         int
 	Logs                  []requestLog
 	LogStats              logStats
 	RouteStats            []routeStat
@@ -230,18 +232,35 @@ func newGateway(store *Store, config Config) (*Gateway, error) {
 		loginTmpl:   loginTmpl,
 		listenAddr:  envOrDefault("WAITEWAY_LISTEN", ":8080"),
 		adminListen: envOrDefault("WAITEWAY_ADMIN_LISTEN", ":9090"),
+		logCh:       make(chan requestLog, 1024),
+		stopCh:      make(chan struct{}),
+		doneCh:      make(chan struct{}),
 	}
 
 	if err := g.applyConfig(config); err != nil {
 		return nil, err
 	}
 
+	go g.drainLogs()
+
 	return g, nil
+}
+
+// Close stops the background log drainer and waits for it to finish. Pending
+// in-memory log entries are flushed to the store before returning.
+func (g *Gateway) Close() {
+	select {
+	case <-g.stopCh:
+		return // already closed
+	default:
+		close(g.stopCh)
+	}
+	<-g.doneCh
 }
 
 func (g *Gateway) applyConfig(config Config) error {
 	config.LoadBalancer = normalizeLoadBalancerConfig(config.LoadBalancer)
-	routes, policies, apiKeys, err := compileConfig(config)
+	routes, policies, err := compileConfig(config)
 	if err != nil {
 		return err
 	}
@@ -252,31 +271,35 @@ func (g *Gateway) applyConfig(config Config) error {
 	g.config = config
 	g.policies = policies
 	g.routes = routes
-	g.apiKeys = apiKeys
 	return nil
 }
 
-func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, map[string]struct{}, error) {
-	apiKeys := make(map[string]struct{})
+func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, error) {
 	policies := make(map[string]*compiledPolicy, len(config.Policies))
+	seenPrefixes := make(map[string]string, len(config.Routes))
 
 	for _, policy := range config.Policies {
 		compiled, err := compilePolicy(policy)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("compile policy %q: %w", policy.Name, err)
+			return nil, nil, fmt.Errorf("compile policy %q: %w", policy.Name, err)
 		}
 		policies[policy.Name] = compiled
 	}
 
 	routes := make([]compiledRoute, 0, len(config.Routes))
 	for _, route := range config.Routes {
+		route.PathPrefix = normalizePathPrefix(route.PathPrefix)
 		if route.PathPrefix == "" || route.Target == "" {
-			return nil, nil, nil, errors.New("every route needs path_prefix and target")
+			return nil, nil, errors.New("every route needs path_prefix and target")
 		}
+		if existingName, ok := seenPrefixes[route.PathPrefix]; ok {
+			return nil, nil, fmt.Errorf("route path prefix %q is already in use (conflicts with route %q)", route.PathPrefix, existingName)
+		}
+		seenPrefixes[route.PathPrefix] = route.Name
 
 		targetURL, err := url.Parse(route.Target)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("parse target %q: %w", route.Target, err)
+			return nil, nil, fmt.Errorf("parse target %q: %w", route.Target, err)
 		}
 
 		routeAPIKeys := make(map[string]struct{}, len(route.APIKeys))
@@ -292,7 +315,7 @@ func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, 
 			var ok bool
 			policyRef, ok = policies[route.PolicyName]
 			if !ok {
-				return nil, nil, nil, fmt.Errorf("route %q uses unknown policy %q", route.Name, route.PolicyName)
+				return nil, nil, fmt.Errorf("route %q uses unknown policy %q", route.Name, route.PolicyName)
 			}
 		}
 
@@ -310,7 +333,7 @@ func compileConfig(config Config) ([]compiledRoute, map[string]*compiledPolicy, 
 		return len(routes[i].PathPrefix) > len(routes[j].PathPrefix)
 	})
 
-	return routes, policies, apiKeys, nil
+	return routes, policies, nil
 }
 
 func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *httputil.ReverseProxy {
@@ -515,8 +538,7 @@ func (g *Gateway) handleAdminAddPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g.reloadConfig()
-	http.Redirect(w, r, "/?tab=policy", http.StatusSeeOther)
+	g.finishAdminAction(w, r, "/?tab=policy", "policy")
 }
 
 func (g *Gateway) handleAdminUpdatePolicy(w http.ResponseWriter, r *http.Request) {
@@ -543,8 +565,7 @@ func (g *Gateway) handleAdminUpdatePolicy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	g.reloadConfig()
-	http.Redirect(w, r, "/?tab=policy", http.StatusSeeOther)
+	g.finishAdminAction(w, r, "/?tab=policy", "policy")
 }
 
 func (g *Gateway) handleAdminDeletePolicy(w http.ResponseWriter, r *http.Request) {
@@ -562,8 +583,7 @@ func (g *Gateway) handleAdminDeletePolicy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	g.reloadConfig()
-	http.Redirect(w, r, "/?tab=policy", http.StatusSeeOther)
+	g.finishAdminAction(w, r, "/?tab=policy", "policy")
 }
 
 func (g *Gateway) handleAdminSaveSettings(w http.ResponseWriter, r *http.Request) {
@@ -606,7 +626,13 @@ func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
+	// New password invalidates every existing session so old cookies
+	// cannot be reused. The admin will be sent back to the login page.
+	if err := g.store.DeleteAllSessions(); err != nil {
+		log.Printf("clear sessions after password change failed: %v", err)
+	}
+
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminSaveLogging(w http.ResponseWriter, r *http.Request) {
@@ -644,46 +670,6 @@ func (g *Gateway) handleAdminSaveLoadBalancer(w http.ResponseWriter, r *http.Req
 	http.Redirect(w, r, "/?tab="+tab, http.StatusSeeOther)
 }
 
-func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
-	config := g.currentConfig()
-	route, err := routeFromForm(r)
-	if err != nil {
-		g.renderAdminForm(w, config, "", err.Error())
-		return
-	}
-
-	if err := g.store.AddRoute(route); err != nil {
-		g.renderAdminForm(w, config, "", err.Error())
-		return
-	}
-
-	g.reloadConfig()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-func (g *Gateway) handleAdminUpdateRoute(w http.ResponseWriter, r *http.Request) {
-	config := g.currentConfig()
-	index, err := routeIndexFromForm(r, len(config.Routes))
-	if err != nil {
-		g.renderAdminForm(w, config, "", err.Error())
-		return
-	}
-
-	route, err := routeFromForm(r)
-	if err != nil {
-		g.renderAdminForm(w, config, "", err.Error())
-		return
-	}
-
-	if err := g.store.UpdateRoute(index, route); err != nil {
-		g.renderAdminForm(w, config, "", err.Error())
-		return
-	}
-
-	g.reloadConfig()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
 func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request) {
 	config := g.currentConfig()
 	index, err := routeIndexFromForm(r, len(config.Routes))
@@ -697,8 +683,7 @@ func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	g.reloadConfig()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	g.finishAdminAction(w, r, "/", "gateway")
 }
 
 func (g *Gateway) saveConfig(config Config) error {
@@ -706,7 +691,7 @@ func (g *Gateway) saveConfig(config Config) error {
 	if err != nil {
 		return err
 	}
-	if _, _, _, err := compileConfig(config); err != nil {
+	if _, _, err := compileConfig(config); err != nil {
 		return err
 	}
 
@@ -729,6 +714,57 @@ func (g *Gateway) reloadConfig() error {
 	return g.applyConfig(config)
 }
 
+// finishAdminAction reloads the live config after a successful admin write
+// and either redirects on success or renders the form with a visible error.
+// This prevents silent divergence between the database and the running gateway.
+func (g *Gateway) finishAdminAction(w http.ResponseWriter, r *http.Request, redirectURL, activeTab string) {
+	if err := g.reloadConfig(); err != nil {
+		log.Printf("reload config after admin change failed: %v", err)
+		config := g.currentConfig()
+		config.ActiveTab = activeTab
+		g.renderAdminForm(w, config, "", "change saved but reload failed: "+err.Error())
+		return
+	}
+	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+}
+
+func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
+	route, err := routeFromForm(r)
+	if err != nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if err := g.store.AddRoute(route); err != nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	g.finishAdminAction(w, r, "/", "gateway")
+}
+
+func (g *Gateway) handleAdminUpdateRoute(w http.ResponseWriter, r *http.Request) {
+	config := g.currentConfig()
+	index, err := routeIndexFromForm(r, len(config.Routes))
+	if err != nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	route, err := routeFromForm(r)
+	if err != nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if err := g.store.UpdateRoute(index, route); err != nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	g.finishAdminAction(w, r, "/", "gateway")
+}
+
 func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageData {
 	config := g.currentConfig()
 	routes := make([]Route, len(config.Routes))
@@ -739,19 +775,12 @@ func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageDat
 	stats, routeStats := summarizeLogs(logs)
 	openRoutes := 0
 	protectedRoutes := 0
-	routeKeyCount := 0
 	for _, route := range routes {
 		if route.PolicyName != "" || route.RequireAPIKey {
 			protectedRoutes++
 		} else {
 			openRoutes++
 		}
-		if route.PolicyName == "" {
-			routeKeyCount += len(route.APIKeys)
-		}
-	}
-	for _, policy := range policies {
-		routeKeyCount += len(policy.APIKeys)
 	}
 
 	data := adminPageData{
@@ -771,7 +800,6 @@ func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageDat
 		ActiveTab:             normalizeAdminTab(activeTab),
 		OpenRoutes:            openRoutes,
 		ProtectedRoutes:       protectedRoutes,
-		RouteKeyCount:         routeKeyCount,
 		Logs:                  logs,
 		LogStats:              stats,
 		RouteStats:            routeStats,
@@ -960,11 +988,57 @@ func (g *Gateway) recordRequest(r *http.Request, routeName string, status int, d
 		Duration:   duration,
 	}
 
-	if err := g.store.AddLog(entry); err != nil {
-		log.Printf("waiteway failed to store request log: %v", err)
+	// Non-blocking send keeps the request hot path free of SQLite writes.
+	// If the drainer falls behind, drop the entry rather than slow requests.
+	select {
+	case g.logCh <- entry:
+	default:
 	}
 
 	log.Printf("request method=%s path=%s route=%s status=%d ip=%s duration=%s", entry.Method, entry.Path, entry.Route, entry.Status, entry.RemoteAddr, entry.Duration)
+}
+
+// drainLogs is a single background consumer for request logs. It writes each
+// entry to the store and periodically trims the log table so it cannot grow
+// unbounded. Exits when stopCh is closed, flushing any pending entries first.
+func (g *Gateway) drainLogs() {
+	defer close(g.doneCh)
+	const trimEvery = 100
+	count := 0
+
+	write := func(entry requestLog) {
+		if err := g.store.AddLog(entry); err != nil {
+			log.Printf("waiteway failed to store request log: %v", err)
+			return
+		}
+		count++
+		if count >= trimEvery {
+			count = 0
+			limit := g.currentConfig().LogLimit
+			if limit > 0 {
+				if err := g.store.TrimLogs(limit); err != nil {
+					log.Printf("waiteway failed to trim logs: %v", err)
+				}
+			}
+		}
+	}
+
+	for {
+		select {
+		case <-g.stopCh:
+			// flush any remaining entries then exit
+			for {
+				select {
+				case entry := <-g.logCh:
+					write(entry)
+				default:
+					return
+				}
+			}
+		case entry := <-g.logCh:
+			write(entry)
+		}
+	}
 }
 
 func (g *Gateway) clientIP(r *http.Request) string {
@@ -1087,10 +1161,6 @@ func cleanForwardedIP(value string) string {
 }
 
 func (g *Gateway) authorizeAPIKey(route compiledRoute, r *http.Request) bool {
-	g.mu.RLock()
-	apiKeys := g.apiKeys
-	g.mu.RUnlock()
-
 	key := r.Header.Get("X-API-Key")
 	if key == "" {
 		auth := r.Header.Get("Authorization")
@@ -1099,16 +1169,10 @@ func (g *Gateway) authorizeAPIKey(route compiledRoute, r *http.Request) bool {
 		}
 	}
 
-	if len(route.apiKeys) > 0 {
-		_, ok := route.apiKeys[key]
-		return ok
-	}
-
-	if len(apiKeys) == 0 {
+	if len(route.apiKeys) == 0 {
 		return false
 	}
-
-	_, ok := apiKeys[key]
+	_, ok := route.apiKeys[key]
 	return ok
 }
 
@@ -1129,13 +1193,12 @@ func routeMatchesPath(prefix, path string) bool {
 	if !strings.HasPrefix(path, prefix) {
 		return false
 	}
-	if path == prefix {
+	if path == prefix || prefix == "/" {
 		return true
 	}
-	if prefix == "/" {
-		return true
-	}
-	return strings.HasSuffix(prefix, "/") || strings.HasPrefix(path[len(prefix):], "/")
+	// prefixes are normalized without trailing slash, so require a
+	// segment boundary after the prefix to avoid matching /apifoo against /api
+	return strings.HasPrefix(path[len(prefix):], "/")
 }
 
 func routeStatName(entry requestLog) (string, bool) {
@@ -1293,8 +1356,22 @@ func routeFromForm(r *http.Request) (Route, error) {
 	if route.Target == "" {
 		return Route{}, errors.New("route target is required")
 	}
+	if err := validateRouteTarget(route.Target); err != nil {
+		return Route{}, err
+	}
 
 	return route, nil
+}
+
+func validateRouteTarget(target string) error {
+	u, err := url.Parse(target)
+	if err != nil {
+		return fmt.Errorf("route target %q is not a valid URL: %w", target, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("route target %q must include scheme and host (e.g. https://example.com)", target)
+	}
+	return nil
 }
 
 func policyFromForm(r *http.Request) (Policy, error) {
@@ -1509,7 +1586,10 @@ func normalizePathPrefix(value string) string {
 		return ""
 	}
 	if !strings.HasPrefix(value, "/") {
-		return "/" + value
+		value = "/" + value
+	}
+	for len(value) > 1 && strings.HasSuffix(value, "/") {
+		value = strings.TrimRight(value, "/")
 	}
 	return value
 }
