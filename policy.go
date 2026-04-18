@@ -68,12 +68,14 @@ type rateLimiter struct {
 	limit   int
 	window  time.Duration
 	entries map[string][]time.Time
+	calls   int
 }
 
 type responseCache struct {
 	mu      sync.RWMutex
 	ttl     time.Duration
 	entries map[string]cachedResponse
+	sets    int
 }
 
 type cachedResponse struct {
@@ -396,12 +398,30 @@ func (g *Gateway) storeCachedPolicyResponse(route compiledRoute, r *http.Request
 	route.policy.cache.Set(cacheKey(r), recorder.status, recorder.header, recorder.body.Bytes(), time.Now())
 }
 
+// rateLimiterSweepEvery controls how often Allow sweeps expired keys out of
+// the entries map. Amortizes cleanup cost so the hot path stays O(1).
+const rateLimiterSweepEvery = 256
+
 func (r *rateLimiter) Allow(key string, now time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	hits := r.entries[key]
 	cutoff := now.Add(-r.window)
+
+	r.calls++
+	if r.calls >= rateLimiterSweepEvery {
+		r.calls = 0
+		for k, hits := range r.entries {
+			if k == key {
+				continue
+			}
+			if len(hits) == 0 || !hits[len(hits)-1].After(cutoff) {
+				delete(r.entries, k)
+			}
+		}
+	}
+
+	hits := r.entries[key]
 	kept := hits[:0]
 	for _, hit := range hits {
 		if hit.After(cutoff) {
@@ -491,6 +511,10 @@ func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
 	return entry, true
 }
 
+// responseCacheSweepEvery controls how often Set sweeps expired entries out
+// of the cache. Popular-then-cold keys would otherwise accumulate forever.
+const responseCacheSweepEvery = 64
+
 func (c *responseCache) Set(key string, status int, header http.Header, body []byte, now time.Time) {
 	c.mu.Lock()
 	c.entries[key] = cachedResponse{
@@ -498,6 +522,15 @@ func (c *responseCache) Set(key string, status int, header http.Header, body []b
 		header:    cloneHeader(header),
 		body:      append([]byte(nil), body...),
 		expiresAt: now.Add(c.ttl),
+	}
+	c.sets++
+	if c.sets >= responseCacheSweepEvery {
+		c.sets = 0
+		for k, entry := range c.entries {
+			if now.After(entry.expiresAt) {
+				delete(c.entries, k)
+			}
+		}
 	}
 	c.mu.Unlock()
 }

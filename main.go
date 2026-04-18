@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,10 +14,12 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -62,9 +65,10 @@ type Gateway struct {
 	listenAddr  string
 	adminListen string
 
-	logCh  chan requestLog
-	stopCh chan struct{}
-	doneCh chan struct{}
+	logCh     chan requestLog
+	stopCh    chan struct{}
+	doneCh    chan struct{}
+	closeOnce sync.Once
 }
 
 type compiledRoute struct {
@@ -147,7 +151,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer store.Close()
 
 	if !store.HasRoutes() {
 		store.AddRoute(Route{
@@ -172,17 +175,37 @@ func main() {
 		log.Fatal(err)
 	}
 
+	gwServer := &http.Server{Addr: listen, Handler: gateway.gatewayHandler()}
+	adminServer := &http.Server{Addr: adminListen, Handler: gateway.adminHandler()}
+
 	go func() {
 		log.Printf("waiteway admin listening on %s", adminListen)
-		if err := http.ListenAndServe(adminListen, gateway.adminHandler()); err != nil {
+		if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
 
-	log.Printf("waiteway gateway listening on %s", listen)
-	if err := http.ListenAndServe(listen, gateway.gatewayHandler()); err != nil {
-		log.Fatal(err)
-	}
+	go func() {
+		log.Printf("waiteway gateway listening on %s", listen)
+		if err := gwServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	// Wait for SIGINT or SIGTERM, then shut down cleanly: stop accepting new
+	// connections, let in-flight requests finish, flush pending log entries,
+	// close the store. Without this, container restarts lose buffered logs.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	log.Printf("waiteway shutting down")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = gwServer.Shutdown(ctx)
+	_ = adminServer.Shutdown(ctx)
+	gateway.Close()
+	store.Close()
 }
 
 func envOrDefault(key, fallback string) string {
@@ -247,14 +270,10 @@ func newGateway(store *Store, config Config) (*Gateway, error) {
 }
 
 // Close stops the background log drainer and waits for it to finish. Pending
-// in-memory log entries are flushed to the store before returning.
+// in-memory log entries are flushed to the store before returning. Safe to
+// call from multiple goroutines.
 func (g *Gateway) Close() {
-	select {
-	case <-g.stopCh:
-		return // already closed
-	default:
-		close(g.stopCh)
-	}
+	g.closeOnce.Do(func() { close(g.stopCh) })
 	<-g.doneCh
 }
 
@@ -731,12 +750,12 @@ func (g *Gateway) finishAdminAction(w http.ResponseWriter, r *http.Request, redi
 func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
 	route, err := routeFromForm(r)
 	if err != nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		silentAdminRedirect(w, r)
 		return
 	}
 
 	if err := g.store.AddRoute(route); err != nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		silentAdminRedirect(w, r)
 		return
 	}
 
@@ -747,22 +766,30 @@ func (g *Gateway) handleAdminUpdateRoute(w http.ResponseWriter, r *http.Request)
 	config := g.currentConfig()
 	index, err := routeIndexFromForm(r, len(config.Routes))
 	if err != nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		silentAdminRedirect(w, r)
 		return
 	}
 
 	route, err := routeFromForm(r)
 	if err != nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		silentAdminRedirect(w, r)
 		return
 	}
 
 	if err := g.store.UpdateRoute(index, route); err != nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		silentAdminRedirect(w, r)
 		return
 	}
 
 	g.finishAdminAction(w, r, "/", "gateway")
+}
+
+// silentAdminRedirect sends the admin back to a clean GET URL. Client-side
+// validation catches the common mistakes; the rare server-side failure (two
+// tabs racing, JS disabled) just returns to the admin page without polluting
+// the URL with state.
+func silentAdminRedirect(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageData {
@@ -1616,6 +1643,8 @@ const adminTemplate = `<!doctype html>
     .header-actions { display: flex; gap: 8px; }
     .admin-main { width: 100%; max-width: 1000px; margin: 0 auto; }
     .message { padding: 12px 24px 0 24px; font-size: 0.875rem; }
+    .modal-error { border-left: 2px solid #000; padding: 6px 10px; font-size: 0.8rem; }
+    .modal-error.hidden { display: none; }
     .admin-tabs { display: flex; border-bottom: 1px solid #000; background: #fff; width: 100%; }
     .tab-btn { padding: 12px 24px; border: none; border-bottom: 2px solid transparent; background: none; cursor: pointer; font-size: 0.875rem; font-family: inherit; min-width: 80px; text-align: center; }
     .tab-btn.active { border-bottom-color: #000; }
@@ -1998,15 +2027,16 @@ const adminTemplate = `<!doctype html>
   <div id="route-modal" class="modal hidden">
     <div class="modal-box">
       <h2 id="route-modal-title">add route</h2>
-      <form method="post" action="/">
+      <form id="route-form" method="post" action="/">
+        <div id="route-modal-error" class="modal-error hidden"></div>
         <input type="hidden" id="route-action" name="action" value="add_route">
         <input type="hidden" id="route-index" name="route_index" value="">
         <label for="route-name">name</label>
-        <input id="route-name" type="text" name="route_name" value="">
+        <input id="route-name" type="text" name="route_name" value="" required>
         <label for="route-path-prefix">path prefix</label>
-        <input id="route-path-prefix" type="text" name="route_path_prefix" value="">
+        <input id="route-path-prefix" type="text" name="route_path_prefix" value="" required placeholder="/api/example">
         <label for="route-target">target</label>
-        <input id="route-target" type="text" name="route_target" value="">
+        <input id="route-target" type="url" name="route_target" value="" required placeholder="https://example.com">
         <div class="settings-row">
           <label for="route-policy-name">policy</label>
           <select id="route-policy-name" name="route_policy_name">
@@ -2378,6 +2408,7 @@ const adminTemplate = `<!doctype html>
     }
 
     var existingPolicyNames = [{{ range $index, $policy := .Policies }}{{ if $index }}, {{ end }}{{ printf "%q" $policy.Name }}{{ end }}]
+    var existingRoutePathPrefixes = [{{ range $index, $route := .Routes }}{{ if $index }}, {{ end }}{{ printf "%q" $route.PathPrefix }}{{ end }}]
 
     var policyFeatureMap = {
       'timeout': {
@@ -2534,6 +2565,18 @@ const adminTemplate = `<!doctype html>
       window.history.replaceState({}, '', nextURL.toString())
     }
 
+    function showRouteError(msg) {
+      var el = document.getElementById('route-modal-error')
+      el.textContent = msg
+      el.classList.remove('hidden')
+    }
+
+    function clearRouteError() {
+      var el = document.getElementById('route-modal-error')
+      el.textContent = ''
+      el.classList.add('hidden')
+    }
+
     function openAddRoute() {
       document.getElementById('route-modal-title').textContent = 'add route'
       document.getElementById('route-action').value = 'add_route'
@@ -2543,6 +2586,7 @@ const adminTemplate = `<!doctype html>
       document.getElementById('route-target').value = ''
       document.getElementById('route-policy-name').value = ''
       document.getElementById('route-strip-prefix').value = 'false'
+      clearRouteError()
       document.getElementById('route-modal').classList.remove('hidden')
     }
 
@@ -2556,10 +2600,12 @@ const adminTemplate = `<!doctype html>
       document.getElementById('route-target').value = data.routeTarget
       document.getElementById('route-policy-name').value = data.routePolicyName
       document.getElementById('route-strip-prefix').value = data.routeStripPrefix
+      clearRouteError()
       document.getElementById('route-modal').classList.remove('hidden')
     }
 
     function closeRouteModal() {
+      clearRouteError()
       document.getElementById('route-modal').classList.add('hidden')
     }
 
@@ -2754,6 +2800,44 @@ const adminTemplate = `<!doctype html>
       if (!duplicate) return
       event.preventDefault()
       window.alert('policy name already exists')
+    })
+
+    function normalizeRoutePathPrefix(value) {
+      var trimmed = (value || '').trim()
+      if (trimmed === '') return ''
+      if (trimmed.charAt(0) !== '/') trimmed = '/' + trimmed
+      while (trimmed.length > 1 && trimmed.charAt(trimmed.length - 1) === '/') {
+        trimmed = trimmed.slice(0, -1)
+      }
+      return trimmed
+    }
+
+    document.getElementById('route-form').addEventListener('submit', function (event) {
+      var name = document.getElementById('route-name').value.trim()
+      var prefix = normalizeRoutePathPrefix(document.getElementById('route-path-prefix').value)
+      var target = document.getElementById('route-target').value.trim()
+      var currentIndex = document.getElementById('route-index').value
+
+      clearRouteError()
+
+      if (name === '') { event.preventDefault(); showRouteError('name is required'); return }
+      if (prefix === '') { event.preventDefault(); showRouteError('path prefix is required'); return }
+      if (target === '') { event.preventDefault(); showRouteError('target is required'); return }
+
+      if (!/^https?:\/\/[^\s/]+/.test(target)) {
+        event.preventDefault()
+        showRouteError('target must start with http:// or https:// and include a host')
+        return
+      }
+
+      var duplicate = existingRoutePathPrefixes.some(function (existing, index) {
+        if (currentIndex !== '' && String(index) === currentIndex) return false
+        return existing === prefix
+      })
+      if (duplicate) {
+        event.preventDefault()
+        showRouteError('path prefix "' + prefix + '" is already in use')
+      }
     })
   </script>
 </body>
