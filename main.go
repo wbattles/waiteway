@@ -18,7 +18,56 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+var (
+	waitewayHTTPRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "waiteway_http_requests_total",
+			Help: "Total HTTP requests handled by the gateway.",
+		},
+		[]string{"route", "method", "status"},
+	)
+	waitewayHTTPRequestDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "waiteway_http_request_duration_seconds",
+			Help:    "HTTP request duration in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"route", "method", "status"},
+	)
+	waitewayHTTPInFlightRequests = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "waiteway_http_in_flight_requests",
+			Help: "Current number of in-flight gateway requests.",
+		},
+	)
+	waitewayRoutesTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "waiteway_routes_total",
+			Help: "Current number of configured routes.",
+		},
+	)
+	waitewayPoliciesTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "waiteway_policies_total",
+			Help: "Current number of configured policies.",
+		},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(
+		waitewayHTTPRequestsTotal,
+		waitewayHTTPRequestDurationSeconds,
+		waitewayHTTPInFlightRequests,
+		waitewayRoutesTotal,
+		waitewayPoliciesTotal,
+	)
+}
 
 type Config struct {
 	Admin        AdminConfig
@@ -253,6 +302,8 @@ func (g *Gateway) applyConfig(config Config) error {
 	g.policies = policies
 	g.routes = routes
 	g.apiKeys = apiKeys
+	waitewayRoutesTotal.Set(float64(len(config.Routes)))
+	waitewayPoliciesTotal.Set(float64(len(config.Policies)))
 	return nil
 }
 
@@ -373,6 +424,7 @@ func (g *Gateway) adminHandler() http.Handler {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/login", g.handleAdminLogin)
 	mux.HandleFunc("/logout", g.handleAdminLogout)
 	mux.HandleFunc("/", g.handleAdmin)
@@ -891,27 +943,31 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
+	waitewayHTTPInFlightRequests.Inc()
+	defer waitewayHTTPInFlightRequests.Dec()
+
 	route, ok := g.matchRoute(r.URL.Path)
 	if !ok {
-		g.recordRequest(r, "", http.StatusNotFound, 0)
+		g.recordRequest(r, "", http.StatusNotFound, time.Since(start))
 		http.NotFound(w, r)
 		return
 	}
 
 	if route.RequireAPIKey && !g.authorizeAPIKey(route, r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		g.recordRequest(r, route.Name, http.StatusUnauthorized, 0)
+		g.recordRequest(r, route.Name, http.StatusUnauthorized, time.Since(start))
 		return
 	}
 
 	if applyCORSPreflight(route.policy, w, r) {
-		g.recordRequest(r, route.Name, http.StatusNoContent, 0)
+		g.recordRequest(r, route.Name, http.StatusNoContent, time.Since(start))
 		return
 	}
 
 	if ok, status, message := g.authorizePolicy(route, r); !ok {
 		http.Error(w, message, status)
-		g.recordRequest(r, route.Name, status, 0)
+		g.recordRequest(r, route.Name, status, time.Since(start))
 		return
 	}
 
@@ -921,7 +977,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if cached, ok := g.cachedPolicyResponse(route, r); ok {
 		w.Header().Set("X-Waiteway-Cache", "HIT")
 		writeCachedResponse(w, cached)
-		g.recordRequest(r, route.Name, cached.status, 0)
+		g.recordRequest(r, route.Name, cached.status, time.Since(start))
 		return
 	}
 
@@ -931,7 +987,6 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if shouldCacheRouteResponse(route, r) {
 		writer = cacheRecorder
 	}
-	start := time.Now()
 	route.proxy.ServeHTTP(writer, r)
 	if writer == cacheRecorder {
 		w.Header().Set("X-Waiteway-Cache", "MISS")
@@ -950,6 +1005,10 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) recordRequest(r *http.Request, routeName string, status int, duration time.Duration) {
+	statusLabel := strconv.Itoa(status)
+	waitewayHTTPRequestsTotal.WithLabelValues(routeLabel(routeName), r.Method, statusLabel).Inc()
+	waitewayHTTPRequestDurationSeconds.WithLabelValues(routeLabel(routeName), r.Method, statusLabel).Observe(duration.Seconds())
+
 	entry := requestLog{
 		Time:       time.Now(),
 		Method:     r.Method,
@@ -965,6 +1024,13 @@ func (g *Gateway) recordRequest(r *http.Request, routeName string, status int, d
 	}
 
 	log.Printf("request method=%s path=%s route=%s status=%d ip=%s duration=%s", entry.Method, entry.Path, entry.Route, entry.Status, entry.RemoteAddr, entry.Duration)
+}
+
+func routeLabel(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return "unmatched"
+	}
+	return name
 }
 
 func (g *Gateway) clientIP(r *http.Request) string {

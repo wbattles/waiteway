@@ -16,6 +16,8 @@ Admin portal: `http://localhost:9090`
 
 Gateway: `http://localhost:8080`
 
+Prometheus metrics: `http://localhost:9090/metrics`
+
 ### Docker
 
 ```bash
@@ -109,3 +111,23 @@ internet → waiteway :8080 → upstream services
 ```
 
 Keep the admin port internal. Only expose the gateway.
+
+## Prometheus
+
+Scrape the admin port.
+
+```yaml
+scrape_configs:
+  - job_name: waiteway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["waiteway:9090"]
+```
+
+Main metrics:
+
+- `waiteway_http_requests_total`
+- `waiteway_http_request_duration_seconds`
+- `waiteway_http_in_flight_requests`
+- `waiteway_routes_total`
+- `waiteway_policies_total`

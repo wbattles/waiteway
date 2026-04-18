@@ -18,9 +18,14 @@ service:
   gateway:
     type: ClusterIP
     port: 8080
+    annotations: {}
   admin:
     type: ClusterIP
     port: 9090
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/path: /metrics
+      prometheus.io/port: "9090"
 
 ingress:
   gateway:

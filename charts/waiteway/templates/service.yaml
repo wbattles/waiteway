@@ -4,6 +4,10 @@ metadata:
   name: {{ .Release.Name }}-gateway
   labels:
     app: {{ .Release.Name }}
+  {{- with .Values.service.gateway.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ .Values.service.gateway.type }}
   ports:
@@ -19,6 +23,10 @@ metadata:
   name: {{ .Release.Name }}-admin
   labels:
     app: {{ .Release.Name }}
+  {{- with .Values.service.admin.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ .Values.service.admin.type }}
   ports:
