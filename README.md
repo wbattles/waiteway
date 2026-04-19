@@ -1,5 +1,7 @@
 # Waiteway
 
+[![Casino funds](https://img.shields.io/badge/Casino_funds-Ko--fi-ff5f5f?logo=ko-fi&logoColor=white)](https://ko-fi.com/wbattles)
+
 Gateways made simple.
 
 ## Run
@@ -124,7 +126,3 @@ internet → waiteway :8080 → upstream services
 ```
 
 Keep the admin port internal. Only expose the gateway.
-
-## Support
-
-[![Casino funds](https://img.shields.io/badge/Casino_funds-Ko--fi-ff5f5f?logo=ko-fi&logoColor=white)](https://ko-fi.com/wbattles)
