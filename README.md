@@ -126,3 +126,7 @@ internet → waiteway :8080 → upstream services
 ```
 
 Keep the admin port internal. Only expose the gateway.
+
+## License
+
+This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.
