@@ -1077,7 +1077,9 @@ func (g *Gateway) logRequest(entry requestLog) {
 		return
 	}
 
-	log.Print(string(encoded))
+	if _, err := os.Stdout.Write(append(encoded, '\n')); err != nil {
+		log.Printf("waiteway failed to write request log: %v", err)
+	}
 }
 
 // drainLogs is a single background consumer for request logs. It writes each
