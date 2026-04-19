@@ -86,6 +86,19 @@ Each policy can have any combination of features.
 
 View recent requests, stats, and top routes.
 
+Waiteway also writes request logs to stdout as JSON.
+
+### Metrics
+
+Admin port exposes Prometheus-style metrics at `/metrics`.
+
+Current metrics:
+
+- `waiteway_requests_total`
+- `waiteway_errors_total`
+
+The Helm chart adds Prometheus scrape annotations to the admin service by default.
+
 ### Settings tab
 
 Change admin username, password, and log limit.

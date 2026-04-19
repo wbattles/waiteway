@@ -19,6 +19,10 @@ metadata:
   name: {{ .Release.Name }}-admin
   labels:
     app: {{ .Release.Name }}
+  {{- if and .Values.metrics.enabled .Values.metrics.service.annotations }}
+  annotations:
+    {{- toYaml .Values.metrics.service.annotations | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ .Values.service.admin.type }}
   ports:

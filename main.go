@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -68,7 +69,13 @@ type Gateway struct {
 	logCh     chan requestLog
 	stopCh    chan struct{}
 	doneCh    chan struct{}
+	metrics   gatewayMetrics
 	closeOnce sync.Once
+}
+
+type gatewayMetrics struct {
+	requestsTotal uint64
+	errorsTotal   uint64
 }
 
 type compiledRoute struct {
@@ -415,10 +422,31 @@ func (g *Gateway) adminHandler() http.Handler {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("/metrics", g.handleMetrics)
 	mux.HandleFunc("/login", g.handleAdminLogin)
 	mux.HandleFunc("/logout", g.handleAdminLogout)
 	mux.HandleFunc("/", g.handleAdmin)
 	return mux
+}
+
+func (g *Gateway) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	_, _ = fmt.Fprintf(
+		w,
+		"# HELP waiteway_requests_total Total gateway requests.\n"+
+			"# TYPE waiteway_requests_total counter\n"+
+			"waiteway_requests_total %d\n"+
+			"# HELP waiteway_errors_total Total gateway requests with 5xx status.\n"+
+			"# TYPE waiteway_errors_total counter\n"+
+			"waiteway_errors_total %d\n",
+		atomic.LoadUint64(&g.metrics.requestsTotal),
+		atomic.LoadUint64(&g.metrics.errorsTotal),
+	)
 }
 
 func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
@@ -1015,6 +1043,11 @@ func (g *Gateway) recordRequest(r *http.Request, routeName string, status int, d
 		Duration:   duration,
 	}
 
+	atomic.AddUint64(&g.metrics.requestsTotal, 1)
+	if status >= http.StatusInternalServerError {
+		atomic.AddUint64(&g.metrics.errorsTotal, 1)
+	}
+
 	// Non-blocking send keeps the request hot path free of SQLite writes.
 	// If the drainer falls behind, drop the entry rather than slow requests.
 	select {
@@ -1022,7 +1055,29 @@ func (g *Gateway) recordRequest(r *http.Request, routeName string, status int, d
 	default:
 	}
 
-	log.Printf("request method=%s path=%s route=%s status=%d ip=%s duration=%s", entry.Method, entry.Path, entry.Route, entry.Status, entry.RemoteAddr, entry.Duration)
+	g.logRequest(entry)
+}
+
+func (g *Gateway) logRequest(entry requestLog) {
+	payload := map[string]any{
+		"time":        entry.Time.Format(time.RFC3339Nano),
+		"level":       "info",
+		"event":       "request",
+		"method":      entry.Method,
+		"path":        entry.Path,
+		"route":       entry.Route,
+		"status":      entry.Status,
+		"ip":          entry.RemoteAddr,
+		"duration_ms": float64(entry.Duration) / float64(time.Millisecond),
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("waiteway failed to encode request log: %v", err)
+		return
+	}
+
+	log.Print(string(encoded))
 }
 
 // drainLogs is a single background consumer for request logs. It writes each
