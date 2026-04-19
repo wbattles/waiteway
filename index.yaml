@@ -3,6 +3,16 @@ entries:
   waiteway:
   - apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-04-19T02:33:42.87648076Z"
+    description: Simple API gateway for Waisuite apps
+    digest: 8419b3b5ae6a45a7514ab042b5cded3ef164456903b7b5e83d524d49c204d4a4
+    name: waiteway
+    type: application
+    urls:
+    - https://github.com/wbattles/waiteway/releases/download/waiteway-0.1.3/waiteway-0.1.3.tgz
+    version: 0.1.3
+  - apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-04-19T01:59:33.359148375Z"
     description: Simple API gateway for Waisuite apps
     digest: 27947854663de0d78228d13ba561f6d7e55b154ff87c37d22e524978184b00a3
@@ -31,4 +41,4 @@ entries:
     urls:
     - https://github.com/wbattles/waiteway/releases/download/waiteway-0.1.0/waiteway-0.1.0.tgz
     version: 0.1.0
-generated: "2026-04-19T01:59:33.359160958Z"
+generated: "2026-04-19T02:33:42.87649659Z"
