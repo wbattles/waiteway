@@ -7,7 +7,8 @@ metadata:
 spec:
   type: {{ .Values.service.gateway.type }}
   ports:
-    - port: {{ .Values.service.gateway.port }}
+    - name: gateway
+      port: {{ .Values.service.gateway.port }}
       targetPort: gateway
       protocol: TCP
   selector:
@@ -26,7 +27,8 @@ metadata:
 spec:
   type: {{ .Values.service.admin.type }}
   ports:
-    - port: {{ .Values.service.admin.port }}
+    - name: admin
+      port: {{ .Values.service.admin.port }}
       targetPort: admin
       protocol: TCP
   selector:

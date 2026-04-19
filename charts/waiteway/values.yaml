@@ -31,6 +31,12 @@ metrics:
       prometheus.io/path: /metrics
       prometheus.io/port: "9090"
 
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  labels: {}
+  annotations: {}
+
 ingress:
   gateway:
     enabled: false

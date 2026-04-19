@@ -99,6 +99,8 @@ Current metrics:
 
 The Helm chart adds Prometheus scrape annotations to the admin service by default.
 
+If you use kube-prometheus-stack or another Prometheus Operator setup, enable the chart's `ServiceMonitor` too.
+
 ### Settings tab
 
 Change admin username, password, and log limit.
