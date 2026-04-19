@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
+	"os"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -163,5 +166,67 @@ func TestAdminMetricsEndpointReportsCounters(t *testing.T) {
 	}
 	if !strings.Contains(text, "waiteway_errors_total 1") {
 		t.Fatalf("expected errors counter in metrics output, got %q", text)
+	}
+}
+
+func TestGatewayLogRequestWritesRawJSONLine(t *testing.T) {
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	gw, err := newGateway(store, Config{
+		Admin: AdminConfig{Username: "admin", Password: "admin"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(gw.Close)
+
+	originalStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+
+	gw.logRequest(requestLog{
+		Time:       time.Date(2026, 4, 18, 22, 21, 29, 0, time.UTC),
+		Method:     "GET",
+		Path:       "/api/joke",
+		Status:     401,
+		Route:      "joke",
+		RemoteAddr: "72.209.227.37",
+		Duration:   0,
+	})
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+
+	line := strings.TrimSpace(buf.String())
+	if strings.Contains(line, "2026/") {
+		t.Fatalf("expected raw JSON without Go log prefix, got %q", line)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		t.Fatalf("expected valid JSON line, got %q: %v", line, err)
+	}
+
+	if payload["event"] != "request" {
+		t.Fatalf("expected request event, got %#v", payload["event"])
+	}
+	if payload["route"] != "joke" {
+		t.Fatalf("expected joke route, got %#v", payload["route"])
 	}
 }
