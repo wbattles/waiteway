@@ -1,7 +1,9 @@
 package main
 
 import (
+	"io"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,7 +121,47 @@ func TestGatewayRecordRequestIsNonBlocking(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("recordRequest blocked when channel was full")
+		case <-time.After(2 * time.Second):
+			t.Fatal("recordRequest blocked when channel was full")
+		}
+}
+
+func TestAdminMetricsEndpointReportsCounters(t *testing.T) {
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	gw, err := newGateway(store, Config{
+		Admin: AdminConfig{Username: "admin", Password: "admin"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	gw.recordRequest(req, "test", 200, time.Millisecond)
+	gw.recordRequest(req, "test", 502, 2*time.Millisecond)
+
+	res := httptest.NewRecorder()
+	gw.adminHandler().ServeHTTP(res, httptest.NewRequest("GET", "/metrics", nil))
+
+	if res.Code != 200 {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+
+	body, err := io.ReadAll(res.Result().Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+
+	if !strings.Contains(text, "waiteway_requests_total 2") {
+		t.Fatalf("expected requests counter in metrics output, got %q", text)
+	}
+	if !strings.Contains(text, "waiteway_errors_total 1") {
+		t.Fatalf("expected errors counter in metrics output, got %q", text)
 	}
 }
