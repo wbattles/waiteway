@@ -26,9 +26,7 @@ CREATE TABLE IF NOT EXISTS policies (
 	request_timeout_seconds  INTEGER NOT NULL DEFAULT 0,
 	retry_count              INTEGER NOT NULL DEFAULT 0,
 	require_api_key          INTEGER NOT NULL DEFAULT 0,
-	api_keys                 TEXT NOT NULL DEFAULT '',
-	basic_auth_username      TEXT NOT NULL DEFAULT '',
-	basic_auth_password      TEXT NOT NULL DEFAULT '',
+	require_user_auth        INTEGER NOT NULL DEFAULT 0,
 	rate_limit_requests      INTEGER NOT NULL DEFAULT 0,
 	rate_limit_window_seconds INTEGER NOT NULL DEFAULT 0,
 	allowed_methods          TEXT NOT NULL DEFAULT '',
@@ -82,10 +80,27 @@ CREATE TABLE IF NOT EXISTS request_logs (
 	duration_ns INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS users (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	username      TEXT NOT NULL UNIQUE,
+	password_hash TEXT NOT NULL,
+	is_admin      INTEGER NOT NULL DEFAULT 0,
+	created_at    TEXT NOT NULL
+	);
+
 CREATE TABLE IF NOT EXISTS sessions (
 	id         TEXT PRIMARY KEY,
+	created_at TEXT NOT NULL,
+	user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE
+	);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	key        TEXT NOT NULL UNIQUE,
+	key_prefix TEXT NOT NULL DEFAULT '',
+	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	created_at TEXT NOT NULL
-);
+	);
 `
 
 func openStore(dbPath string) (*Store, error) {
@@ -110,6 +125,9 @@ func openStore(dbPath string) (*Store, error) {
 func runMigrations(db *sql.DB) error {
 	columns := []string{
 		"ALTER TABLE routes ADD COLUMN policy_name TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE",
+		"ALTER TABLE api_keys ADD COLUMN key_prefix TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE policies ADD COLUMN require_user_auth INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE policies ADD COLUMN request_timeout_seconds INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE policies ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE policies ADD COLUMN basic_auth_username TEXT NOT NULL DEFAULT ''",
@@ -139,6 +157,9 @@ func runMigrations(db *sql.DB) error {
 
 	indexes := []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_path_prefix ON routes(path_prefix)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key)",
+		"CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)",
 	}
 	for _, stmt := range indexes {
 		if _, err := db.Exec(stmt); err != nil {
@@ -511,7 +532,7 @@ func (s *Store) HasSettings() bool {
 
 func (s *Store) ListPolicies() ([]Policy, error) {
 	rows, err := s.db.Query(`
-		SELECT name, request_timeout_seconds, retry_count, require_api_key, api_keys, basic_auth_username, basic_auth_password, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds
+		SELECT name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds
 		FROM policies
 		ORDER BY position, id
 	`)
@@ -524,7 +545,7 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 	for rows.Next() {
 		var policy Policy
 		var requireAPIKey int
-		var apiKeys string
+		var requireUserAuth int
 		var allowedMethods string
 		var addRequestHeaders string
 		var removeRequestHeaders string
@@ -540,9 +561,7 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 			&policy.RequestTimeoutSeconds,
 			&policy.RetryCount,
 			&requireAPIKey,
-			&apiKeys,
-			&policy.BasicAuthUsername,
-			&policy.BasicAuthPassword,
+			&requireUserAuth,
 			&policy.RateLimitRequests,
 			&policy.RateLimitWindowSeconds,
 			&allowedMethods,
@@ -569,7 +588,7 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 			return nil, err
 		}
 		policy.RequireAPIKey = requireAPIKey == 1
-		policy.APIKeys = splitLines(apiKeys)
+		policy.RequireUserAuth = requireUserAuth == 1
 		policy.AllowedMethods = splitLines(allowedMethods)
 		policy.AddRequestHeaders = splitLines(addRequestHeaders)
 		policy.RemoveRequestHeaders = splitLines(removeRequestHeaders)
@@ -636,15 +655,13 @@ func (s *Store) AddPolicy(policy Policy) error {
 	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM policies").Scan(&maxPos)
 
 	_, err = tx.Exec(
-		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, api_keys, basic_auth_username, basic_auth_password, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		policy.Name,
 		policy.RequestTimeoutSeconds,
 		policy.RetryCount,
 		boolToInt(policy.RequireAPIKey),
-		joinLines(policy.APIKeys),
-		policy.BasicAuthUsername,
-		policy.BasicAuthPassword,
+		boolToInt(policy.RequireUserAuth),
 		policy.RateLimitRequests,
 		policy.RateLimitWindowSeconds,
 		joinLines(policy.AllowedMethods),
@@ -704,14 +721,12 @@ func (s *Store) UpdatePolicy(index int, policy Policy) error {
 	}
 
 	_, err = tx.Exec(
-		`UPDATE policies SET name = ?, request_timeout_seconds = ?, retry_count = ?, require_api_key = ?, api_keys = ?, basic_auth_username = ?, basic_auth_password = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, allowed_methods = ?, rewrite_path_prefix = ?, add_request_headers = ?, remove_request_headers = ?, max_payload_bytes = ?, request_transform_find = ?, request_transform_replace = ?, cache_ttl_seconds = ?, add_response_headers = ?, remove_response_headers = ?, response_transform_find = ?, response_transform_replace = ?, max_response_bytes = ?, cors_allow_origins = ?, cors_allow_methods = ?, cors_allow_headers = ?, ip_allow_list = ?, ip_block_list = ?, circuit_breaker_failures = ?, circuit_breaker_reset_seconds = ? WHERE id = ?`,
+		`UPDATE policies SET name = ?, request_timeout_seconds = ?, retry_count = ?, require_api_key = ?, require_user_auth = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, allowed_methods = ?, rewrite_path_prefix = ?, add_request_headers = ?, remove_request_headers = ?, max_payload_bytes = ?, request_transform_find = ?, request_transform_replace = ?, cache_ttl_seconds = ?, add_response_headers = ?, remove_response_headers = ?, response_transform_find = ?, response_transform_replace = ?, max_response_bytes = ?, cors_allow_origins = ?, cors_allow_methods = ?, cors_allow_headers = ?, ip_allow_list = ?, ip_block_list = ?, circuit_breaker_failures = ?, circuit_breaker_reset_seconds = ? WHERE id = ?`,
 		policy.Name,
 		policy.RequestTimeoutSeconds,
 		policy.RetryCount,
 		boolToInt(policy.RequireAPIKey),
-		joinLines(policy.APIKeys),
-		policy.BasicAuthUsername,
-		policy.BasicAuthPassword,
+		boolToInt(policy.RequireUserAuth),
 		policy.RateLimitRequests,
 		policy.RateLimitWindowSeconds,
 		joinLines(policy.AllowedMethods),

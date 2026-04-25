@@ -5,11 +5,8 @@ services:
       - "8080:8080"
       - "9090:9090"
     volumes:
-      - data:/data
+      - ./data:/data
     environment:
       - WAITEWAY_ADMIN_USERNAME=admin
       - WAITEWAY_ADMIN_PASSWORD=change-me
     restart: unless-stopped
-
-volumes:
-  data:

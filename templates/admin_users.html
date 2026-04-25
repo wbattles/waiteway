@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>waiteway - admin</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #fff; color: #000; height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #000; flex-shrink: 0; }
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    main { flex: 1; overflow: hidden; }
+    .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.25); display: flex; align-items: center; justify-content: center; z-index: 10; }
+    .modal.hidden { display: none; }
+    .modal-box { background: #fff; padding: 24px; width: 360px; max-width: 90vw; max-height: 80vh; display: flex; flex-direction: column; gap: 12px; border: 1px solid #000; overflow: hidden; }
+    .modal-box h2 { font-size: 0.95rem; font-weight: 500; }
+    .modal-box input, .modal-box textarea { width: 100%; border: 1px solid #000; padding: 8px 10px; font-size: 0.875rem; font-family: inherit; outline: none; }
+    .modal-box input[type="checkbox"] { width: auto; }
+    .modal-actions { display: flex; gap: 8px; position: relative; }
+    .user-selection { display: flex; flex-direction: column; gap: 8px; }
+    .user-selection > label { font-size: 0.875rem; margin-bottom: 4px; }
+    .user-checkbox-list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-height: 150px; overflow-y: auto; border: 1px solid #000; padding: 8px 10px; }
+    .user-checkbox { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; cursor: pointer; justify-content: flex-start; }
+    .user-checkbox input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+    .hidden { display: none; }
+    .header-actions { display: flex; gap: 8px; }
+    .header-actions form { margin: 0; display: flex; }
+    .admin-main { width: 100%; max-width: 1000px; margin: 0 auto; }
+    .admin-tabs { display: flex; border-bottom: 1px solid #000; background: #fff; width: 100%; box-sizing: border-box; }
+    .tab-btn { padding: 12px 24px; border: none; border-bottom: 2px solid transparent; background: none; cursor: pointer; font-size: 0.875rem; font-family: inherit; min-width: 80px; text-align: center; }
+    .tab-btn.active { border-bottom-color: #000; }
+    .tab-content { padding: 24px; position: relative; width: 100%; box-sizing: border-box; }
+    .tab-panel { display: none; width: 100%; }
+    .tab-panel.active { display: block; }
+    .tab-panel h3 { font-size: 1rem; font-weight: 500; margin-bottom: 12px; }
+    .users-layout, .teams-layout { display: grid; grid-template-columns: 300px 1fr; gap: 24px; height: 100%; }
+    .create-user-panel, .create-team-panel { padding: 20px; border: 1px solid #000; height: fit-content; }
+    .create-user-panel h3, .create-team-panel h3 { margin-bottom: 16px; }
+    .create-user-panel form, .create-team-panel form { display: flex; flex-direction: column; gap: 12px; }
+    .create-user-panel input[type="text"], .create-user-panel input[type="password"], .create-team-panel input[type="text"] { border: 1px solid #000; padding: 8px 10px; font-size: 0.875rem; font-family: inherit; outline: none; width: 100%; box-sizing: border-box; }
+    .create-user-panel label, .create-team-panel label { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; }
+    .create-user-panel button, .create-team-panel button { margin-top: 4px; }
+    .user-list-panel { border: 1px solid #000; display: flex; flex-direction: column; height: 500px; }
+    .user-list-panel h3 { padding: 16px 20px 0 20px; margin-bottom: 16px; border-bottom: 1px solid #000; padding-bottom: 12px; flex-shrink: 0; }
+    #users-container, #teams-container { padding: 0 20px 20px 20px; flex: 1; overflow-y: auto; min-height: 0; }
+    .user-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid #000; gap: 16px; }
+    .user-item:last-child { border-bottom: none; }
+    .user-item:first-child { padding-top: 0; }
+    .user-main { flex: 1; min-width: 0; }
+    .user-identity { display: flex; align-items: center; gap: 10px; margin-bottom: 3px; flex-wrap: wrap; }
+    .username { font-weight: 500; font-size: 0.875rem; word-break: break-word; min-width: 0; }
+    .user-activity { font-size: 0.75rem; color: #666; }
+    .admin-badge, .minion-badge { font-size: 0.7rem; padding: 1px 5px; border: 1px solid #000; }
+    .user-actions { display: flex; align-items: flex-start; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+    body.dark { background: #000; color: #fff; }
+    body.dark header { border-bottom-color: #fff; }
+    body.dark .modal-box { background: #000; border-color: #fff; }
+    body.dark .modal-box input { border-color: #fff; background: #000; color: #fff; }
+    body.dark .admin-tabs { border-bottom-color: #fff; background: #000; }
+    body.dark .tab-btn.active { border-bottom-color: #fff; }
+    body.dark .create-user-panel, body.dark .create-team-panel, body.dark .user-list-panel { border-color: #fff; }
+    body.dark .user-item { border-bottom-color: #fff; }
+    body.dark .user-list-panel h3 { border-bottom-color: #fff; }
+    body.dark .admin-badge, body.dark .minion-badge, body.dark .user-checkbox-list { border-color: #fff; }
+    body.dark .create-user-panel input[type="text"], body.dark .create-user-panel input[type="password"], body.dark .create-team-panel input[type="text"] { border-color: #fff; background: #000; color: #fff; }
+    body.dark .user-activity { color: #999; }
+    body.dark .tab-btn { color: #fff; }
+    body.dark .create-user-panel label, body.dark .create-team-panel label, body.dark #confirm-message, body.dark .modal-box h2 { color: #fff; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-left">
+      <span class="app-name">waiteway admin</span>
+    </div>
+    <div class="header-actions">
+      <button onclick="window.location.href='/'">back to board</button>
+      <button onclick="window.location.href='/settings'">settings</button>
+      <form method="post" action="/logout"><button type="submit">logout</button></form>
+    </div>
+  </header>
+
+  <main class="admin-main">
+    <nav class="admin-tabs">
+      <button class="tab-btn active" onclick="showTab('users', this)">users</button>
+    </nav>
+
+    <div class="tab-content">
+      <section id="users-tab" class="tab-panel active">
+        <div class="users-layout">
+          <div class="create-user-panel">
+            <h3>create user</h3>
+            <form id="create-user-form">
+              <input type="text" id="new-username" placeholder="username" maxlength="15" required />
+              <input type="password" id="new-password" placeholder="password" required />
+              <label>
+                <input type="checkbox" id="new-is-admin" />
+                admin user
+              </label>
+              <button type="submit">create user</button>
+            </form>
+          </div>
+
+          <div class="user-list-panel">
+            <h3>users</h3>
+            <div id="users-container"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="password-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2>change password</h2>
+      <form id="password-form">
+        <input type="password" id="new-user-password" placeholder="new password" required />
+        <div class="modal-actions">
+          <button type="submit">save</button>
+          <button type="button" onclick="closePasswordModal()">cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2 id="confirm-title">confirm action</h2>
+      <p id="confirm-message">are you sure?</p>
+      <div class="modal-actions">
+        <button id="confirm-ok" onclick="confirmAction()">confirm</button>
+        <button onclick="closeConfirmModal()">cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentUser = { id: {{ .CurrentUser.ID }}, username: {{ printf "%q" .CurrentUser.Username }}, is_admin: {{ if .IsAdmin }}true{{ else }}false{{ end }} };
+    let confirmCallback = null;
+    let userToChangePassword = null;
+
+    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    async function loadUsers() {
+      try {
+        const response = await fetch('/api/admin/users');
+        if (!response.ok) throw new Error('Failed to load users');
+        const users = await response.json();
+        const container = document.getElementById('users-container');
+        container.innerHTML = users.map(user => {
+          const canChangePassword = !user.is_admin || user.id === currentUser?.id;
+          const canDelete = user.id !== currentUser?.id && user.username !== 'admin';
+          const createdDate = new Date(user.created_at);
+          const createdText = `created ${createdDate.toLocaleDateString()}`;
+          return `
+            <div class="user-item">
+              <div class="user-main">
+                <div class="user-identity">
+                  <div class="username">${esc(user.username)}</div>
+                  ${user.is_admin ? '<span class="admin-badge">admin</span>' : '<span class="minion-badge">minion</span>'}
+                </div>
+                <div class="user-activity">${createdText}</div>
+              </div>
+              <div class="user-actions">
+                ${canChangePassword ? `<button data-username="${esc(user.username)}" onclick="changePassword(${user.id}, this.dataset.username)">change password</button>` : ''}
+                ${canDelete ? `<button data-username="${esc(user.username)}" onclick="deleteUser(${user.id}, this.dataset.username)">delete</button>` : ''}
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (error) {
+        console.error('Error loading users:', error);
+      }
+    }
+
+    async function createUser(event) {
+      event.preventDefault();
+      const username = document.getElementById('new-username').value.trim();
+      const password = document.getElementById('new-password').value;
+      const isAdmin = document.getElementById('new-is-admin').checked;
+      try {
+        const response = await fetch('/api/admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, is_admin: isAdmin })
+        });
+        if (response.ok) {
+          document.getElementById('create-user-form').reset();
+          loadUsers();
+        } else {
+          const error = await response.json();
+          showConfirmModal('error', error.detail || 'failed to create user', null);
+        }
+      } catch (error) {
+        showConfirmModal('error', 'connection error', null);
+      }
+    }
+
+    function showConfirmModal(title, message, callback) {
+      const titleElement = document.getElementById('confirm-title');
+      if (title) {
+        titleElement.textContent = title;
+        titleElement.style.display = 'block';
+      } else {
+        titleElement.style.display = 'none';
+      }
+      document.getElementById('confirm-message').textContent = message;
+      confirmCallback = callback;
+      document.getElementById('confirm-modal').classList.remove('hidden');
+    }
+
+    function closeConfirmModal() {
+      document.getElementById('confirm-modal').classList.add('hidden');
+      confirmCallback = null;
+    }
+
+    function confirmAction() {
+      if (confirmCallback) confirmCallback();
+      closeConfirmModal();
+    }
+
+    async function deleteUser(userId, username) {
+      showConfirmModal('', `delete user ${username}?`, async () => {
+        try {
+          const response = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+          if (response.ok) loadUsers();
+          else {
+            const error = await response.json();
+            showConfirmModal('error', error.detail || 'failed to delete user', null);
+          }
+        } catch (error) {
+          showConfirmModal('error', 'connection error', null);
+        }
+      });
+    }
+
+    async function changePassword(userId, username) {
+      userToChangePassword = userId;
+      document.getElementById('password-modal').querySelector('h2').textContent = `change password for ${username}`;
+      document.getElementById('new-user-password').value = '';
+      document.getElementById('password-modal').classList.remove('hidden');
+      document.getElementById('new-user-password').focus();
+    }
+
+    function closePasswordModal() {
+      document.getElementById('password-modal').classList.add('hidden');
+      userToChangePassword = null;
+    }
+
+    async function submitPasswordChange(event) {
+      event.preventDefault();
+      const newPassword = document.getElementById('new-user-password').value;
+      try {
+        const response = await fetch(`/api/admin/users/${userToChangePassword}/password`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_password: newPassword })
+        });
+        if (response.ok) {
+          closePasswordModal();
+          showConfirmModal('success', 'password updated successfully', null);
+        } else {
+          const error = await response.json();
+          showConfirmModal('error', error.detail || 'failed to update password', null);
+        }
+      } catch (error) {
+        showConfirmModal('error', 'connection error', null);
+      }
+    }
+
+    function showTab(tabName, btn) {
+      document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(`${tabName}-tab`).classList.add('active');
+      btn.classList.add('active');
+    }
+
+    document.getElementById('create-user-form').addEventListener('submit', createUser);
+    document.getElementById('password-form').addEventListener('submit', submitPasswordChange);
+    document.getElementById('password-modal').addEventListener('click', e => { if (e.target === document.getElementById('password-modal')) closePasswordModal(); });
+    document.getElementById('confirm-modal').addEventListener('click', e => { if (e.target === document.getElementById('confirm-modal')) closeConfirmModal(); });
+    function loadFont() {
+      const saved = localStorage.getItem('waiteway-font');
+      if (saved) document.body.style.fontFamily = saved;
+    }
+    function applyMode(mode) {
+      if (mode === 'dark') document.body.classList.add('dark');
+      else document.body.classList.remove('dark');
+    }
+    function loadMode() {
+      applyMode(localStorage.getItem('waiteway-mode') || 'light');
+    }
+    loadFont();
+    loadMode();
+    loadUsers();
+  </script>
+</body>
+</html>

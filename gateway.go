@@ -15,15 +15,17 @@ import (
 )
 
 type Gateway struct {
-	mu          sync.RWMutex
-	store       *Store
-	config      Config
-	state       atomic.Pointer[compiledGatewayState]
-	tmpl        *template.Template
-	loginTmpl   *template.Template
-	startedAt   time.Time
-	listenAddr  string
-	adminListen string
+	mu           sync.RWMutex
+	store        *Store
+	config       Config
+	state        atomic.Pointer[compiledGatewayState]
+	tmpl         *template.Template
+	usersTmpl    *template.Template
+	settingsTmpl *template.Template
+	loginTmpl    *template.Template
+	startedAt    time.Time
+	listenAddr   string
+	adminListen  string
 
 	logCh     chan requestLog
 	stopCh    chan struct{}
@@ -65,16 +67,28 @@ func newGateway(store *Store, config Config) (*Gateway, error) {
 		return nil, fmt.Errorf("parse login template: %w", err)
 	}
 
+	usersTmpl, err := template.New("users").Parse(usersAdminTemplate)
+	if err != nil {
+		return nil, fmt.Errorf("parse users template: %w", err)
+	}
+
+	settingsTmpl, err := template.New("settings").Parse(settingsTemplate)
+	if err != nil {
+		return nil, fmt.Errorf("parse settings template: %w", err)
+	}
+
 	g := &Gateway{
-		store:       store,
-		startedAt:   time.Now(),
-		tmpl:        tmpl,
-		loginTmpl:   loginTmpl,
-		listenAddr:  envOrDefault("WAITEWAY_LISTEN", ":8080"),
-		adminListen: envOrDefault("WAITEWAY_ADMIN_LISTEN", ":9090"),
-		logCh:       make(chan requestLog, 1024),
-		stopCh:      make(chan struct{}),
-		doneCh:      make(chan struct{}),
+		store:        store,
+		startedAt:    time.Now(),
+		tmpl:         tmpl,
+		usersTmpl:    usersTmpl,
+		settingsTmpl: settingsTmpl,
+		loginTmpl:    loginTmpl,
+		listenAddr:   envOrDefault("WAITEWAY_LISTEN", ":8080"),
+		adminListen:  envOrDefault("WAITEWAY_ADMIN_LISTEN", ":9090"),
+		logCh:        make(chan requestLog, 1024),
+		stopCh:       make(chan struct{}),
+		doneCh:       make(chan struct{}),
 	}
 
 	if err := g.applyConfig(config); err != nil {
@@ -138,8 +152,11 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var apiKey string
+	var requestUser User
+	var hasRequestUser bool
 	if routeNeedsAPIKey(route) {
 		apiKey = requestAPIKey(r)
+		requestUser, hasRequestUser = g.requestUser(r)
 	}
 
 	needsClientIP := routeNeedsClientAddr(route)
@@ -148,7 +165,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		clientIP = g.clientIP(r)
 	}
 
-	if route.RequireAPIKey && !g.authorizeAPIKey(route, apiKey) {
+	if route.RequireAPIKey && !g.authorizeRouteAPIKey(route, apiKey, requestUser, hasRequestUser) {
 		if clientIP == "" {
 			clientIP = g.clientIP(r)
 		}
@@ -176,7 +193,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		now = time.Now()
 	}
 
-	if ok, status, message := g.authorizePolicy(route, r, apiKey, clientAddr, hasClientAddr, now); !ok {
+	if ok, status, message := g.authorizePolicy(route, r, apiKey, requestUser, hasRequestUser, clientAddr, hasClientAddr, now); !ok {
 		if clientIP == "" {
 			clientIP = g.clientIP(r)
 		}

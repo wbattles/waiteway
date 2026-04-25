@@ -19,6 +19,22 @@ type Config struct {
 	ActiveTab    string
 }
 
+type User struct {
+	ID           int
+	Username     string
+	PasswordHash string
+	IsAdmin      bool
+	CreatedAt    time.Time
+}
+
+type APIKey struct {
+	ID        int
+	Key       string
+	KeyPrefix string
+	UserID    int
+	CreatedAt time.Time
+}
+
 type AdminConfig struct {
 	Username string
 	Password string
@@ -68,6 +84,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if err := store.EnsureLegacyAdmin(config.Admin.Username, config.Admin.Password); err != nil {
+		log.Fatal(err)
+	}
+
 	listen := envOrDefault("WAITEWAY_LISTEN", ":8080")
 	adminListen := envOrDefault("WAITEWAY_ADMIN_LISTEN", ":9090")
 
@@ -93,9 +113,6 @@ func main() {
 		}
 	}()
 
-	// Wait for SIGINT or SIGTERM, then shut down cleanly: stop accepting new
-	// connections, let in-flight requests finish, flush pending log entries,
-	// close the store. Without this, container restarts lose buffered logs.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh

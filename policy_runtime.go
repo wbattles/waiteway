@@ -20,7 +20,7 @@ func shouldReadBody(method string) bool {
 	}
 }
 
-func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey string, clientIP netip.Addr, hasClientIP bool, now time.Time) (bool, int, string) {
+func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey string, requestUser User, hasRequestUser bool, clientIP netip.Addr, hasClientIP bool, now time.Time) (bool, int, string) {
 	if route.policy == nil {
 		return true, http.StatusOK, ""
 	}
@@ -56,13 +56,13 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey s
 		return false, http.StatusBadRequest, "bad request"
 	}
 
-	if route.policy.RequireAPIKey && !g.authorizePolicyAPIKey(route.policy, apiKey) {
+	if route.policy.RequireAPIKey && !g.authorizePolicyAPIKey(route, route.policy, apiKey, requestUser, hasRequestUser) {
 		return false, http.StatusUnauthorized, "unauthorized"
 	}
 
-	if route.policy.BasicAuthUsername != "" || route.policy.BasicAuthPassword != "" {
+	if route.policy.RequireUserAuth {
 		username, password, ok := requestBasicAuth(r)
-		if !ok || username != route.policy.BasicAuthUsername || password != route.policy.BasicAuthPassword {
+		if !ok || !g.authorizePolicyUserAuth(route.policy, username, password) {
 			return false, http.StatusUnauthorized, "unauthorized"
 		}
 	}
@@ -76,11 +76,23 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey s
 	return true, http.StatusOK, ""
 }
 
-func (g *Gateway) authorizePolicyAPIKey(policy *compiledPolicy, key string) bool {
-	if len(policy.apiKeys) == 0 {
-		return key != ""
+func (g *Gateway) authorizePolicyAPIKey(route compiledRoute, policy *compiledPolicy, key string, requestUser User, hasRequestUser bool) bool {
+	return hasRequestUser
+}
+
+func (g *Gateway) authorizePolicyUserAuth(policy *compiledPolicy, username, password string) bool {
+	user, err := g.store.GetUserByUsername(strings.TrimSpace(username))
+	if err != nil || !checkPassword(password, user.PasswordHash) {
+		return false
 	}
-	_, ok := policy.apiKeys[key]
+	return true
+}
+
+func (g *Gateway) authorizeRouteAPIKey(route compiledRoute, key string, _ User, hasRequestUser bool) bool {
+	if len(route.apiKeys) == 0 {
+		return hasRequestUser
+	}
+	_, ok := route.apiKeys[key]
 	return ok
 }
 
