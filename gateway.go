@@ -152,10 +152,12 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var apiKey string
+	var requestUser User
+	var hasRequestUser bool
 	if routeNeedsAPIKey(route) {
 		apiKey = requestAPIKey(r)
+		requestUser, hasRequestUser = g.requestUser(r)
 	}
-	requestUser, hasRequestUser := g.requestUser(r)
 
 	needsClientIP := routeNeedsClientAddr(route)
 	clientIP := ""

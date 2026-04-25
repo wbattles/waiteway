@@ -111,10 +111,10 @@ func (g *Gateway) handleAPICurrentUser(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleAPIUsers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if _, ok := g.requireUser(w, r); !ok {
+	if _, ok := g.requireAdmin(w, r); !ok {
 		return
 	}
 	users, err := g.store.ListUsers()
@@ -131,7 +131,7 @@ func (g *Gateway) handleAPIUsers(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleAPIMyPassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	user, ok := g.requireUser(w, r)
@@ -191,13 +191,13 @@ func (g *Gateway) handleAPIMyAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"id": key.ID, "key": rawKey})
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (g *Gateway) handleAPIMyAPIKeyByID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	user, ok := g.requireUser(w, r)
@@ -250,7 +250,7 @@ func (g *Gateway) handleAPIAdminUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"id": user.ID, "username": user.Username, "is_admin": user.IsAdmin, "created_at": user.CreatedAt.Format(time.RFC3339), "created_by": admin.ID})
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -267,7 +267,7 @@ func (g *Gateway) handleAPIAdminUserByID(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if r.Method != http.MethodPatch {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		var req adminPasswordChangeRequest
@@ -300,7 +300,7 @@ func (g *Gateway) handleAPIAdminUserByID(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if userID == admin.ID {

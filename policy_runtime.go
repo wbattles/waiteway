@@ -77,7 +77,11 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey s
 }
 
 func (g *Gateway) authorizePolicyAPIKey(route compiledRoute, policy *compiledPolicy, key string, requestUser User, hasRequestUser bool) bool {
-	return hasRequestUser
+	if len(policy.apiKeys) == 0 {
+		return hasRequestUser
+	}
+	_, ok := policy.apiKeys[key]
+	return ok
 }
 
 func (g *Gateway) authorizePolicyUserAuth(policy *compiledPolicy, username, password string) bool {
