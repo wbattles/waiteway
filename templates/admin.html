@@ -87,10 +87,11 @@
     .modal-box form { display: flex; flex-direction: column; gap: 12px; }
     .modal-box textarea { min-height: 90px; resize: vertical; }
     .modal-box input, .modal-box textarea { width: 100%; border: 1px solid #000; padding: 8px 10px; font-size: 0.875rem; font-family: inherit; outline: none; }
+    .modal-box input[type="checkbox"] { width: auto; padding: 0; }
     .modal-actions { display: flex; gap: 8px; }
     .user-checkbox-list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-height: 150px; overflow-y: auto; border: 1px solid #000; padding: 8px 10px; }
     .user-checkbox { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; cursor: pointer; justify-content: flex-start; }
-    .user-checkbox input[type="checkbox"] { margin: 0; }
+    .user-checkbox input[type="checkbox"] { margin: 0; flex-shrink: 0; }
     .user-checkbox span { white-space: nowrap; }
     .policy-modal-box { width: 720px; max-height: 90vh; overflow-y: auto; }
     .policy-builder-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -105,7 +106,7 @@
     .policy-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
     .policy-field label { font-size: 0.8rem; }
     .policy-add-modal { z-index: 20; }
-    .policy-add-list { display: flex; flex-direction: column; gap: 0; max-height: 160px; overflow-y: auto; }
+    .policy-add-list { display: flex; flex-direction: column; gap: 8px; max-height: 160px; overflow-y: auto; }
     .policy-add-option { width: 100%; text-align: left; padding: 12px; border: 1px solid #000; background: #fff; display: flex; flex-direction: column; gap: 4px; }
     .policy-add-option small { opacity: 0.7; }
     body.dark { background: #000; color: #fff; }
@@ -536,7 +537,7 @@
               </div>
               <div class="policy-field">
                 <label>access</label>
-                <div id="policy-api-key-teams" class="user-checkbox-list"><label class="user-checkbox"><input type="checkbox" class="all-teams-toggle" checked onchange="toggleAllTeams(this)"><span>all</span></label>{{ range .Teams }}<label class="user-checkbox team-option"><input type="checkbox" name="policy_api_key_team_ids" value="{{ .ID }}" disabled><span>{{ .Name }}</span></label>{{ else }}<div class="muted">no teams yet</div>{{ end }}</div>
+                <div id="policy-api-key-teams" class="user-checkbox-list"><label class="user-checkbox"><input type="checkbox" class="all-teams-toggle" checked onchange="toggleAllTeams(this)"><span>all</span></label>{{ range .Teams }}<label class="user-checkbox team-option"><input type="checkbox" name="policy_api_key_team_ids" value="{{ .ID }}" disabled><span>{{ .Name }}</span></label>{{ end }}</div>
               </div>
             </div>
           </section>
@@ -556,7 +557,7 @@
               </div>
               <div class="policy-field">
                 <label>access</label>
-                <div id="policy-user-auth-teams" class="user-checkbox-list"><label class="user-checkbox"><input type="checkbox" class="all-teams-toggle" checked onchange="toggleAllTeams(this)"><span>all</span></label>{{ range .Teams }}<label class="user-checkbox team-option"><input type="checkbox" name="policy_user_auth_team_ids" value="{{ .ID }}" disabled><span>{{ .Name }}</span></label>{{ else }}<div class="muted">no teams yet</div>{{ end }}</div>
+                <div id="policy-user-auth-teams" class="user-checkbox-list"><label class="user-checkbox"><input type="checkbox" class="all-teams-toggle" checked onchange="toggleAllTeams(this)"><span>all</span></label>{{ range .Teams }}<label class="user-checkbox team-option"><input type="checkbox" name="policy_user_auth_team_ids" value="{{ .ID }}" disabled><span>{{ .Name }}</span></label>{{ end }}</div>
               </div>
             </div>
           </section>

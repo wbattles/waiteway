@@ -343,7 +343,7 @@ func (g *Gateway) adminPageData(user User, errText, activeTab string) adminPageD
 	copy(routes, config.Routes)
 	policies := make([]Policy, len(config.Policies))
 	copy(policies, config.Policies)
-	teams, _ := g.store.ListTeamsForUser(user)
+	teams, _ := g.store.ListTeamsForUser(User{IsAdmin: true})
 	logs, _ := g.store.ListLogs(config.LogLimit)
 	stats, routeStats := summarizeLogs(logs)
 	openRoutes := 0

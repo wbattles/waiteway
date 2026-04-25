@@ -20,7 +20,7 @@
     .user-selection > label { font-size: 0.875rem; margin-bottom: 4px; }
     .user-checkbox-list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-height: 150px; overflow-y: auto; border: 1px solid #000; padding: 8px 10px; }
     .user-checkbox { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; cursor: pointer; justify-content: flex-start; }
-    .user-checkbox input[type="checkbox"] { margin: 0; }
+    .user-checkbox input[type="checkbox"] { margin: 0; flex-shrink: 0; }
     .hidden { display: none; }
     .header-actions { display: flex; gap: 8px; }
     .header-actions form { margin: 0; display: flex; }
@@ -152,14 +152,14 @@
 
       <section id="teams-tab" class="tab-panel">
         <div class="users-layout">
-          <div class="create-user-panel">
+          {{ if .IsAdmin }}<div class="create-user-panel">
             <h3>create team</h3>
             <form id="create-team-form">
               <input type="text" id="new-team-name" placeholder="team name" maxlength="15" required />
               <input type="text" id="new-team-acronym" placeholder="team code" maxlength="3" required />
               <button type="submit">create team</button>
             </form>
-          </div>
+          </div>{{ end }}
 
           <div class="user-list-panel">
             <h3>my teams</h3>
@@ -372,7 +372,8 @@
       }
     }
 
-    document.getElementById('create-team-form').addEventListener('submit', async e => {
+    var createTeamForm = document.getElementById('create-team-form');
+    if (createTeamForm) createTeamForm.addEventListener('submit', async e => {
       e.preventDefault();
       const name = document.getElementById('new-team-name').value.trim();
       const acronym = document.getElementById('new-team-acronym').value.trim().toUpperCase();
