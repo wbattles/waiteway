@@ -257,6 +257,9 @@ func (s *Store) ListRoutes() ([]Route, error) {
 		r.APIKeys = keysByRouteID[id]
 		routes = append(routes, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return routes, nil
 }
 
