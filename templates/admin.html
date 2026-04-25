@@ -6,9 +6,12 @@
   <title>waiteway</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, -apple-system, sans-serif; background: #fff; color: #000; }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #000; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #fff; color: #000; height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #000; flex-shrink: 0; }
+    .header-left { display: flex; align-items: center; gap: 14px; }
     .header-actions { display: flex; gap: 8px; }
+    .header-actions form { margin: 0; display: flex; }
+    main { flex: 1; overflow-y: auto; }
     .admin-main { width: 100%; max-width: 1000px; margin: 0 auto; }
     .message { padding: 12px 24px 0 24px; font-size: 0.875rem; }
     .modal-error { border-left: 2px solid #000; padding: 6px 10px; font-size: 0.8rem; }
@@ -16,7 +19,7 @@
     .admin-tabs { display: flex; border-bottom: 1px solid #000; background: #fff; width: 100%; }
     .tab-btn { padding: 12px 24px; border: none; border-bottom: 2px solid transparent; background: none; cursor: pointer; font-size: 0.875rem; font-family: inherit; min-width: 80px; text-align: center; }
     .tab-btn.active { border-bottom-color: #000; }
-    .tab-content { padding: 24px; position: relative; width: 100%; }
+    .tab-content { padding: 24px; position: relative; width: 100%; box-sizing: border-box; }
     .tab-panel { display: none; width: 100%; }
     .tab-panel.active { display: block; }
     .tab-panel h3 { font-size: 1rem; font-weight: 500; margin-bottom: 12px; }
@@ -37,6 +40,7 @@
     .settings-row label { flex-shrink: 0; width: 70px; }
     .settings-panel select { width: 100%; box-sizing: border-box; }
     .settings-panel button { margin-top: 4px; }
+    .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
     .logging-layout { display: flex; flex-direction: column; gap: 24px; min-height: 500px; }
     .stats-grid { display: grid; grid-template-columns: 1.1fr repeat(4, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
     .stat-card { border: 1px solid #000; padding: 10px 12px; min-height: 0; }
@@ -82,7 +86,13 @@
     .modal-box h2 { font-size: 0.95rem; font-weight: 500; }
     .modal-box form { display: flex; flex-direction: column; gap: 12px; }
     .modal-box textarea { min-height: 90px; resize: vertical; }
+    .modal-box input, .modal-box textarea { width: 100%; border: 1px solid #000; padding: 8px 10px; font-size: 0.875rem; font-family: inherit; outline: none; }
+    .modal-box input[type="checkbox"] { width: auto; padding: 0; }
     .modal-actions { display: flex; gap: 8px; }
+    .user-checkbox-list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-height: 150px; overflow-y: auto; border: 1px solid #000; padding: 8px 10px; }
+    .user-checkbox { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; cursor: pointer; justify-content: flex-start; }
+    .user-checkbox input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+    .user-checkbox span { white-space: nowrap; }
     .policy-modal-box { width: 720px; max-height: 90vh; overflow-y: auto; }
     .policy-builder-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .policy-features { display: flex; flex-direction: column; gap: 12px; max-height: 52vh; overflow-y: auto; padding-right: 4px; }
@@ -96,11 +106,54 @@
     .policy-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
     .policy-field label { font-size: 0.8rem; }
     .policy-add-modal { z-index: 20; }
-    .policy-add-list { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+    .policy-add-list { display: flex; flex-direction: column; gap: 8px; max-height: 160px; overflow-y: auto; }
     .policy-add-option { width: 100%; text-align: left; padding: 12px; border: 1px solid #000; background: #fff; display: flex; flex-direction: column; gap: 4px; }
     .policy-add-option small { opacity: 0.7; }
+    body.dark { background: #000; color: #fff; }
+    body.dark header { border-bottom-color: #fff; }
+    body.dark .admin-tabs { border-bottom-color: #fff; background: #000; }
+    body.dark .tab-btn { color: #fff; }
+    body.dark .tab-btn.active { border-bottom-color: #fff; }
+    body.dark .settings-panel,
+    body.dark .create-user-panel,
+    body.dark .user-list-panel,
+    body.dark .policy-feature-card,
+    body.dark .route-stats,
+    body.dark .stat-card,
+    body.dark .modal-box,
+    body.dark .policy-add-option { background: #000; border-color: #fff; color: #fff; }
+    body.dark .config-table,
+    body.dark .routes-table,
+    body.dark .logs-table,
+    body.dark .policy-add-list,
+    body.dark .user-checkbox-list,
+    body.dark .panel-body,
+    body.dark .log-table-wrap { color: #fff; }
+    body.dark .settings-row label,
+    body.dark .policy-field label,
+    body.dark .policy-feature-header h3,
+    body.dark .policy-feature-help,
+    body.dark .stat-label,
+    body.dark .stat-value,
+    body.dark .muted,
+    body.dark .modal-box h2 { color: #fff; }
+    body.dark .modal-box input,
+    body.dark .modal-box textarea,
+    body.dark .modal-box select,
+    body.dark .settings-panel textarea,
+    body.dark .settings-panel select,
+    body.dark .settings-panel input,
+    body.dark #load-balancer-header,
+    body.dark #settings-value { background: #000; color: #fff; border-color: #fff; }
+    body.dark th, body.dark td, body.dark .user-list-panel h3 { border-bottom-color: #fff; color: #fff; }
+    body.dark .modal-error { border-left-color: #fff; }
+    body.dark .scroll-cell,
+    body.dark .request-scroll,
+    body.dark .route-stat-name,
+    body.dark .route-stat-count { color: #fff; }
     @media (max-width: 700px) {
       .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .config-grid { grid-template-columns: 1fr; }
       .policy-modal-box { width: 92vw; }
       .policy-field-grid { grid-template-columns: minmax(0, 1fr); }
       .policy-builder-actions { flex-direction: column; align-items: stretch; }
@@ -109,8 +162,12 @@
 </head>
 <body>
   <header>
-    <div>waiteway</div>
+    <div class="header-left">
+      <span class="app-name">waiteway</span>
+    </div>
     <div class="header-actions">
+      {{ if .IsAdmin }}<button type="button" onclick="window.location.href='/admin'">admin</button>{{ end }}
+      <button type="button" onclick="window.location.href='/settings'">settings</button>
       <form method="post" action="/logout"><button type="submit">logout</button></form>
     </div>
   </header>
@@ -119,7 +176,7 @@
       <button class="tab-btn {{ if eq .ActiveTab "gateway" }}active{{ end }}" type="button" onclick="showTab('gateway', this)">gateway</button>
       <button class="tab-btn {{ if eq .ActiveTab "policy" }}active{{ end }}" type="button" onclick="showTab('policy', this)">policy</button>
       <button class="tab-btn {{ if eq .ActiveTab "logging" }}active{{ end }}" type="button" onclick="showTab('logging', this)">logging</button>
-      <button class="tab-btn {{ if eq .ActiveTab "settings" }}active{{ end }}" type="button" onclick="showTab('settings', this)">settings</button>
+      {{ if .IsAdmin }}<button class="tab-btn {{ if eq .ActiveTab "config" }}active{{ end }}" type="button" onclick="showTab('config', this)">config</button>{{ end }}
     </nav>
 
     <div class="tab-content">
@@ -127,7 +184,7 @@
         <div class="user-list-panel">
           <h3>routes</h3>
           <div class="panel-body">
-            <p><button type="button" onclick="openAddRoute()">add route</button></p>
+            <p>{{ if .IsAdmin }}<button type="button" onclick="openAddRoute()">add route</button>{{ end }}</p>
             <table class="routes-table">
               <thead>
                 <tr>
@@ -147,12 +204,12 @@
                   <td>{{ routePolicyLabel $route }}</td>
                   <td>
                     <div class="row-actions">
-                      <button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-policy-name="{{ $route.PolicyName }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" onclick="openEditRouteButton(this)">edit</button>
+                      {{ if $.IsAdmin }}<button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-policy-name="{{ $route.PolicyName }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" onclick="openEditRouteButton(this)">edit</button>
                       <form method="post" action="/">
                         <input type="hidden" name="action" value="delete_route">
                         <input type="hidden" name="route_index" value="{{ $index }}">
                         <button type="submit">delete</button>
-                      </form>
+                      </form>{{ else }}<button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-policy-name="{{ $route.PolicyName }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" onclick="openViewRouteButton(this)">view</button>{{ end }}
                     </div>
                   </td>
                 </tr>
@@ -167,7 +224,7 @@
         <div class="user-list-panel">
           <h3>policies</h3>
           <div class="panel-body">
-            <p><button type="button" onclick="openAddPolicy()">add policy</button></p>
+            <p>{{ if .IsAdmin }}<button type="button" onclick="openAddPolicy()">add policy</button>{{ end }}</p>
             <table class="routes-table">
               <thead>
                 <tr>
@@ -183,12 +240,12 @@
                   <td><span class="scroll-cell">{{ policySummary $policy }}</span></td>
                   <td>
                     <div class="row-actions">
-                      <button type="button" data-policy-index="{{ $index }}" data-policy-name="{{ $policy.Name }}" data-policy-request-timeout-seconds="{{ $policy.RequestTimeoutSeconds }}" data-policy-retry-count="{{ $policy.RetryCount }}" data-policy-require-api-key="{{ if $policy.RequireAPIKey }}true{{ else }}false{{ end }}" data-policy-api-keys="{{ range $i, $key := $policy.APIKeys }}{{ if $i }}&#10;{{ end }}{{ $key }}{{ end }}" data-policy-basic-auth-username="{{ $policy.BasicAuthUsername }}" data-policy-basic-auth-password="{{ $policy.BasicAuthPassword }}" data-policy-rate-limit-requests="{{ $policy.RateLimitRequests }}" data-policy-rate-limit-window-seconds="{{ $policy.RateLimitWindowSeconds }}" data-policy-allowed-methods="{{ range $i, $item := $policy.AllowedMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-rewrite-path-prefix="{{ $policy.RewritePathPrefix }}" data-policy-add-request-headers="{{ range $i, $item := $policy.AddRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-request-headers="{{ range $i, $item := $policy.RemoveRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-max-payload-bytes="{{ $policy.MaxPayloadBytes }}" data-policy-request-transform-find="{{ $policy.RequestTransformFind }}" data-policy-request-transform-replace="{{ $policy.RequestTransformReplace }}" data-policy-cache-ttl-seconds="{{ $policy.CacheTTLSeconds }}" data-policy-add-response-headers="{{ range $i, $item := $policy.AddResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-response-headers="{{ range $i, $item := $policy.RemoveResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-response-transform-find="{{ $policy.ResponseTransformFind }}" data-policy-response-transform-replace="{{ $policy.ResponseTransformReplace }}" data-policy-max-response-bytes="{{ $policy.MaxResponseBytes }}" data-policy-cors-allow-origins="{{ range $i, $item := $policy.CORSAllowOrigins }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-methods="{{ range $i, $item := $policy.CORSAllowMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-headers="{{ range $i, $item := $policy.CORSAllowHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-allow-list="{{ range $i, $item := $policy.IPAllowList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-block-list="{{ range $i, $item := $policy.IPBlockList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-circuit-breaker-failures="{{ $policy.CircuitBreakerFailures }}" data-policy-circuit-breaker-reset-seconds="{{ $policy.CircuitBreakerResetSeconds }}" onclick="openEditPolicyButton(this)">edit</button>
+                      {{ if $.IsAdmin }}<button type="button" data-policy-index="{{ $index }}" data-policy-name="{{ $policy.Name }}" data-policy-request-timeout-seconds="{{ $policy.RequestTimeoutSeconds }}" data-policy-retry-count="{{ $policy.RetryCount }}" data-policy-require-api-key="{{ if $policy.RequireAPIKey }}true{{ else }}false{{ end }}" data-policy-api-key-team-ids="{{ range $i, $id := $policy.APIKeyTeamIDs }}{{ if $i }},{{ end }}{{ $id }}{{ end }}" data-policy-api-keys="{{ range $i, $key := $policy.APIKeys }}{{ if $i }}&#10;{{ end }}{{ $key }}{{ end }}" data-policy-require-user-auth="{{ if $policy.RequireUserAuth }}true{{ else }}false{{ end }}" data-policy-user-auth-team-ids="{{ range $i, $id := $policy.UserAuthTeamIDs }}{{ if $i }},{{ end }}{{ $id }}{{ end }}" data-policy-rate-limit-requests="{{ $policy.RateLimitRequests }}" data-policy-rate-limit-window-seconds="{{ $policy.RateLimitWindowSeconds }}" data-policy-allowed-methods="{{ range $i, $item := $policy.AllowedMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-rewrite-path-prefix="{{ $policy.RewritePathPrefix }}" data-policy-add-request-headers="{{ range $i, $item := $policy.AddRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-request-headers="{{ range $i, $item := $policy.RemoveRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-max-payload-bytes="{{ $policy.MaxPayloadBytes }}" data-policy-request-transform-find="{{ $policy.RequestTransformFind }}" data-policy-request-transform-replace="{{ $policy.RequestTransformReplace }}" data-policy-cache-ttl-seconds="{{ $policy.CacheTTLSeconds }}" data-policy-add-response-headers="{{ range $i, $item := $policy.AddResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-response-headers="{{ range $i, $item := $policy.RemoveResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-response-transform-find="{{ $policy.ResponseTransformFind }}" data-policy-response-transform-replace="{{ $policy.ResponseTransformReplace }}" data-policy-max-response-bytes="{{ $policy.MaxResponseBytes }}" data-policy-cors-allow-origins="{{ range $i, $item := $policy.CORSAllowOrigins }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-methods="{{ range $i, $item := $policy.CORSAllowMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-headers="{{ range $i, $item := $policy.CORSAllowHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-allow-list="{{ range $i, $item := $policy.IPAllowList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-block-list="{{ range $i, $item := $policy.IPBlockList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-circuit-breaker-failures="{{ $policy.CircuitBreakerFailures }}" data-policy-circuit-breaker-reset-seconds="{{ $policy.CircuitBreakerResetSeconds }}" onclick="openEditPolicyButton(this)">edit</button>
                       <form method="post" action="/">
                         <input type="hidden" name="action" value="delete_policy">
                         <input type="hidden" name="policy_index" value="{{ $index }}">
                         <button type="submit">delete</button>
-                      </form>
+                      </form>{{ else }}<button type="button" data-policy-index="{{ $index }}" data-policy-name="{{ $policy.Name }}" data-policy-request-timeout-seconds="{{ $policy.RequestTimeoutSeconds }}" data-policy-retry-count="{{ $policy.RetryCount }}" data-policy-require-api-key="{{ if $policy.RequireAPIKey }}true{{ else }}false{{ end }}" data-policy-api-key-team-ids="{{ range $i, $id := $policy.APIKeyTeamIDs }}{{ if $i }},{{ end }}{{ $id }}{{ end }}" data-policy-api-keys="{{ range $i, $key := $policy.APIKeys }}{{ if $i }}&#10;{{ end }}{{ $key }}{{ end }}" data-policy-require-user-auth="{{ if $policy.RequireUserAuth }}true{{ else }}false{{ end }}" data-policy-user-auth-team-ids="{{ range $i, $id := $policy.UserAuthTeamIDs }}{{ if $i }},{{ end }}{{ $id }}{{ end }}" data-policy-rate-limit-requests="{{ $policy.RateLimitRequests }}" data-policy-rate-limit-window-seconds="{{ $policy.RateLimitWindowSeconds }}" data-policy-allowed-methods="{{ range $i, $item := $policy.AllowedMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-rewrite-path-prefix="{{ $policy.RewritePathPrefix }}" data-policy-add-request-headers="{{ range $i, $item := $policy.AddRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-request-headers="{{ range $i, $item := $policy.RemoveRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-max-payload-bytes="{{ $policy.MaxPayloadBytes }}" data-policy-request-transform-find="{{ $policy.RequestTransformFind }}" data-policy-request-transform-replace="{{ $policy.RequestTransformReplace }}" data-policy-cache-ttl-seconds="{{ $policy.CacheTTLSeconds }}" data-policy-add-response-headers="{{ range $i, $item := $policy.AddResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-response-headers="{{ range $i, $item := $policy.RemoveResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-response-transform-find="{{ $policy.ResponseTransformFind }}" data-policy-response-transform-replace="{{ $policy.ResponseTransformReplace }}" data-policy-max-response-bytes="{{ $policy.MaxResponseBytes }}" data-policy-cors-allow-origins="{{ range $i, $item := $policy.CORSAllowOrigins }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-methods="{{ range $i, $item := $policy.CORSAllowMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-headers="{{ range $i, $item := $policy.CORSAllowHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-allow-list="{{ range $i, $item := $policy.IPAllowList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-block-list="{{ range $i, $item := $policy.IPBlockList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-circuit-breaker-failures="{{ $policy.CircuitBreakerFailures }}" data-policy-circuit-breaker-reset-seconds="{{ $policy.CircuitBreakerResetSeconds }}" onclick="openViewPolicyButton(this)">view</button>{{ end }}
                     </div>
                   </td>
                 </tr>
@@ -262,28 +319,12 @@
         </div>
       </section>
 
-      <section id="settings-tab" class="tab-panel {{ if eq .ActiveTab "settings" }}active{{ end }}">
-        <div class="users-layout">
-          <div class="create-user-panel">
-            <h3>admin account</h3>
-            <form method="post" action="/?tab=settings">
-              <input type="hidden" name="action" value="save_settings">
-              <input type="text" name="admin_username" value="{{ .AdminUsername }}" placeholder="admin username">
-              <button type="submit">save username</button>
-            </form>
-            <form method="post" action="/?tab=settings">
-              <input type="hidden" name="action" value="change_password">
-              <input type="password" name="current_password" placeholder="current password" required>
-              <input type="password" name="new_password" placeholder="new password" required>
-              <button type="submit">save password</button>
-            </form>
-          </div>
-
-          <div class="settings-right">
+      {{ if .IsAdmin }}<section id="config-tab" class="tab-panel {{ if eq .ActiveTab "config" }}active{{ end }}">
+        <div class="config-grid">
             <div class="user-list-panel" style="min-height: 0; height: auto;">
               <h3>load balancer</h3>
               <div class="panel-body">
-                <form method="post" action="/?tab=settings" style="display: flex; flex-direction: column; gap: 16px;">
+                <form method="post" action="/?tab=config" style="display: flex; flex-direction: column; gap: 16px;">
                   <input type="hidden" name="action" value="save_load_balancer">
                   <table class="config-table">
                     <tbody>
@@ -379,16 +420,15 @@
                   </tbody>
                 </table>
                 <div style="margin-top: 16px">
-                  <form method="post" action="/?tab=settings" style="display:inline">
+                  <form method="post" action="/?tab=config" style="display:inline">
                     <input type="hidden" name="action" value="clear_logs">
                     <button type="submit">clear logs</button>
                   </form>
                 </div>
               </div>
-            </div>
           </div>
         </div>
-      </section>
+      </section>{{ end }}
     </div>
   </main>
 
@@ -432,7 +472,7 @@
   <div id="settings-modal" class="modal hidden">
     <div class="modal-box">
       <h2 id="settings-modal-title">edit setting</h2>
-      <form method="post" action="/?tab=settings">
+      <form method="post" action="/?tab=config">
         <input type="hidden" id="settings-action" name="action" value="save_logging">
         <input id="settings-value" type="text" name="" value="">
         <div class="modal-actions">
@@ -496,25 +536,28 @@
                 </select>
               </div>
               <div class="policy-field">
-                <label for="policy-api-keys">api keys</label>
-                <textarea id="policy-api-keys" name="policy_api_keys" placeholder="one key per line"></textarea>
+                <label>access</label>
+                <div id="policy-api-key-teams" class="user-checkbox-list"><label class="user-checkbox"><input type="checkbox" class="all-teams-toggle" checked onchange="toggleAllTeams(this)"><span>all</span></label>{{ range .Teams }}<label class="user-checkbox team-option"><input type="checkbox" name="policy_api_key_team_ids" value="{{ .ID }}" disabled><span>{{ .Name }}</span></label>{{ end }}</div>
               </div>
             </div>
           </section>
 
           <section id="feature-basic-auth" class="policy-feature-card hidden">
             <div class="policy-feature-header">
-              <h3>basic auth</h3>
+              <h3>username auth</h3>
               <button type="button" onclick="removePolicyFeature('basic-auth')">remove</button>
             </div>
-            <div class="policy-field-grid">
+            <div class="policy-field-grid single">
               <div class="policy-field">
-                <label for="policy-basic-auth-username">username</label>
-                <input id="policy-basic-auth-username" type="text" name="policy_basic_auth_username" value="">
+                <label for="policy-require-user-auth">mode</label>
+                <select id="policy-require-user-auth" name="policy_require_user_auth">
+                  <option value="false">off</option>
+                  <option value="true">on</option>
+                </select>
               </div>
               <div class="policy-field">
-                <label for="policy-basic-auth-password">password</label>
-                <input id="policy-basic-auth-password" type="password" name="policy_basic_auth_password" value="">
+                <label>access</label>
+                <div id="policy-user-auth-teams" class="user-checkbox-list"><label class="user-checkbox"><input type="checkbox" class="all-teams-toggle" checked onchange="toggleAllTeams(this)"><span>all</span></label>{{ range .Teams }}<label class="user-checkbox team-option"><input type="checkbox" name="policy_user_auth_team_ids" value="{{ .ID }}" disabled><span>{{ .Name }}</span></label>{{ end }}</div>
               </div>
             </div>
           </section>
@@ -748,7 +791,7 @@
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('timeout')"><strong>request timeout</strong><small>stop slow upstream calls</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('retry')"><strong>retry</strong><small>retry network failures a few times</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('api-key')"><strong>api key auth</strong><small>require a key and optionally list allowed keys</small></button>
-        <button type="button" class="policy-add-option" onclick="addPolicyFeature('basic-auth')"><strong>basic auth</strong><small>protect with username and password</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('basic-auth')"><strong>username auth</strong><small>allow account username and password access</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('rate-limit')"><strong>rate limiting</strong><small>limit requests in a time window</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('methods')"><strong>method allow list</strong><small>allow only specific HTTP methods</small></button>
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('rewrite')"><strong>path rewrite</strong><small>replace the matched route prefix</small></button>
@@ -795,14 +838,14 @@
         cardId: 'feature-api-key',
         reset: function () {
           document.getElementById('policy-require-api-key').value = 'false'
-          document.getElementById('policy-api-keys').value = ''
+          resetTeamList('policy-api-key-teams')
         }
       },
       'basic-auth': {
         cardId: 'feature-basic-auth',
         reset: function () {
-          document.getElementById('policy-basic-auth-username').value = ''
-          document.getElementById('policy-basic-auth-password').value = ''
+          document.getElementById('policy-require-user-auth').value = 'false'
+          resetTeamList('policy-user-auth-teams')
         }
       },
       'rate-limit': {
@@ -928,8 +971,8 @@
       button.classList.add('active')
       document.getElementById(name + '-tab').classList.add('active')
       var nextURL = new URL(window.location.href)
-      if (name === 'gateway') nextURL.searchParams.delete('tab')
-      else nextURL.searchParams.set('tab', name)
+       if (name === 'gateway') nextURL.searchParams.delete('tab')
+       else nextURL.searchParams.set('tab', name)
       window.history.replaceState({}, '', nextURL.toString())
     }
 
@@ -955,6 +998,7 @@
       document.getElementById('route-policy-name').value = ''
       document.getElementById('route-strip-prefix').value = 'false'
       clearRouteError()
+      enableFormFields('route-form')
       document.getElementById('route-modal').classList.remove('hidden')
     }
 
@@ -969,6 +1013,22 @@
       document.getElementById('route-policy-name').value = data.routePolicyName
       document.getElementById('route-strip-prefix').value = data.routeStripPrefix
       clearRouteError()
+      enableFormFields('route-form')
+      document.getElementById('route-modal').classList.remove('hidden')
+    }
+
+    function openViewRouteButton(button) {
+      const data = button.dataset
+      document.getElementById('route-modal-title').textContent = 'view route'
+      document.getElementById('route-action').value = ''
+      document.getElementById('route-index').value = ''
+      document.getElementById('route-name').value = data.routeName
+      document.getElementById('route-path-prefix').value = data.routePathPrefix
+      document.getElementById('route-target').value = data.routeTarget
+      document.getElementById('route-policy-name').value = data.routePolicyName
+      document.getElementById('route-strip-prefix').value = data.routeStripPrefix
+      clearRouteError()
+      setFormReadOnly('route-form')
       document.getElementById('route-modal').classList.remove('hidden')
     }
 
@@ -977,7 +1037,43 @@
       document.getElementById('route-modal').classList.add('hidden')
     }
 
+    function setFormReadOnly(formId) {
+      var form = document.getElementById(formId)
+      form.querySelectorAll('input, textarea, select').forEach(function (el) { el.disabled = true })
+      var actions = form.querySelector('.modal-actions')
+      if (actions) actions.innerHTML = '<button type="button" onclick="close' + (formId === 'route-form' ? 'Route' : 'Policy') + 'Modal()">close</button>'
+    }
+
+    function enableFormFields(formId) {
+      var form = document.getElementById(formId)
+      form.querySelectorAll('input, textarea, select').forEach(function (el) { el.disabled = false })
+      if (formId === 'route-form') {
+        var actions = form.querySelector('.modal-actions')
+        if (actions) actions.innerHTML = '<button type="submit">save</button><button type="button" onclick="closeRouteModal()">cancel</button>'
+      } else {
+        var actions = form.querySelector('.modal-actions')
+        if (actions) actions.innerHTML = '<button type="submit">save</button><button type="button" onclick="closePolicyModal()">cancel</button>'
+      }
+    }
+
     toggleLoadBalancerHeader()
+
+    function loadFont() {
+      var saved = localStorage.getItem('waiteway-font')
+      if (saved) document.body.style.fontFamily = saved
+    }
+
+    function applyMode(mode) {
+      if (mode === 'dark') document.body.classList.add('dark')
+      else document.body.classList.remove('dark')
+    }
+
+    function loadMode() {
+      applyMode(localStorage.getItem('waiteway-mode') || 'light')
+    }
+
+    loadFont()
+    loadMode()
 
     function openAddPolicy() {
       document.getElementById('policy-modal-title').textContent = 'add policy'
@@ -985,21 +1081,55 @@
       document.getElementById('policy-index').value = ''
       document.getElementById('policy-name').value = ''
       resetPolicyFeatures()
+      resetTeamList('policy-api-key-teams')
+      resetTeamList('policy-user-auth-teams')
+      enableFormFields('policy-form')
+      document.querySelector('.policy-builder-actions button').style.display = ''
+      document.querySelectorAll('.policy-feature-header button').forEach(function (btn) { btn.style.display = '' })
       document.getElementById('policy-modal').classList.remove('hidden')
     }
 
-    function openEditPolicyButton(button) {
+    function syncPolicyTeamChecks(containerId, csvIds) {
+      var container = document.getElementById(containerId)
+      var ids = (csvIds || '').split(',').filter(Boolean)
+      var toggle = container.querySelector('.all-teams-toggle')
+      var checkboxes = container.querySelectorAll('.team-option input')
+      if (ids.length === 0) {
+        if (toggle) toggle.checked = true
+        checkboxes.forEach(function (cb) { cb.checked = false; cb.disabled = true })
+      } else {
+        if (toggle) toggle.checked = false
+        checkboxes.forEach(function (cb) { cb.disabled = false; cb.checked = ids.indexOf(cb.value) !== -1 })
+      }
+    }
+
+    function toggleAllTeams(toggle) {
+      var container = toggle.closest('.user-checkbox-list')
+      var checkboxes = container.querySelectorAll('.team-option input')
+      if (toggle.checked) {
+        checkboxes.forEach(function (cb) { cb.checked = false; cb.disabled = true })
+      } else {
+        checkboxes.forEach(function (cb) { cb.disabled = false })
+      }
+    }
+
+    function resetTeamList(containerId) {
+      var container = document.getElementById(containerId)
+      var toggle = container.querySelector('.all-teams-toggle')
+      if (toggle) toggle.checked = true
+      container.querySelectorAll('.team-option input').forEach(function (cb) { cb.checked = false; cb.disabled = true })
+    }
+
+    function populatePolicyFromButton(button) {
       const data = button.dataset
-      document.getElementById('policy-modal-title').textContent = 'edit policy'
-      document.getElementById('policy-action').value = 'update_policy'
       document.getElementById('policy-index').value = data.policyIndex
       document.getElementById('policy-name').value = data.policyName
       document.getElementById('policy-request-timeout-seconds').value = data.policyRequestTimeoutSeconds
       document.getElementById('policy-retry-count').value = data.policyRetryCount
       document.getElementById('policy-require-api-key').value = data.policyRequireApiKey
-      document.getElementById('policy-api-keys').value = data.policyApiKeys
-      document.getElementById('policy-basic-auth-username').value = data.policyBasicAuthUsername
-      document.getElementById('policy-basic-auth-password').value = data.policyBasicAuthPassword
+      syncPolicyTeamChecks('policy-api-key-teams', data.policyApiKeyTeamIds)
+      document.getElementById('policy-require-user-auth').value = data.policyRequireUserAuth
+      syncPolicyTeamChecks('policy-user-auth-teams', data.policyUserAuthTeamIds)
       document.getElementById('policy-rate-limit-requests').value = data.policyRateLimitRequests
       document.getElementById('policy-rate-limit-window-seconds').value = data.policyRateLimitWindowSeconds
       document.getElementById('policy-allowed-methods').value = data.policyAllowedMethods
@@ -1023,6 +1153,25 @@
       document.getElementById('policy-circuit-breaker-failures').value = data.policyCircuitBreakerFailures
       document.getElementById('policy-circuit-breaker-reset-seconds').value = data.policyCircuitBreakerResetSeconds
       syncPolicyFeaturesFromValues()
+    }
+
+    function openEditPolicyButton(button) {
+      document.getElementById('policy-modal-title').textContent = 'edit policy'
+      document.getElementById('policy-action').value = 'update_policy'
+      populatePolicyFromButton(button)
+      enableFormFields('policy-form')
+      document.querySelector('.policy-builder-actions button').style.display = ''
+      document.querySelectorAll('.policy-feature-header button').forEach(function (btn) { btn.style.display = '' })
+      document.getElementById('policy-modal').classList.remove('hidden')
+    }
+
+    function openViewPolicyButton(button) {
+      document.getElementById('policy-modal-title').textContent = 'view policy'
+      document.getElementById('policy-action').value = ''
+      populatePolicyFromButton(button)
+      setFormReadOnly('policy-form')
+      document.querySelector('.policy-builder-actions button').style.display = 'none'
+      document.querySelectorAll('.policy-feature-header button').forEach(function (btn) { btn.style.display = 'none' })
       document.getElementById('policy-modal').classList.remove('hidden')
     }
 
@@ -1071,9 +1220,7 @@
         requestTimeoutSeconds: document.getElementById('policy-request-timeout-seconds').value,
         retryCount: document.getElementById('policy-retry-count').value,
         requireApiKey: document.getElementById('policy-require-api-key').value,
-        apiKeys: document.getElementById('policy-api-keys').value,
-        basicAuthUsername: document.getElementById('policy-basic-auth-username').value,
-        basicAuthPassword: document.getElementById('policy-basic-auth-password').value,
+        requireUserAuth: document.getElementById('policy-require-user-auth').value,
         rateLimitRequests: document.getElementById('policy-rate-limit-requests').value,
         rateLimitWindowSeconds: document.getElementById('policy-rate-limit-window-seconds').value,
         allowedMethods: document.getElementById('policy-allowed-methods').value,
@@ -1103,9 +1250,7 @@
       document.getElementById('policy-request-timeout-seconds').value = values.requestTimeoutSeconds
       document.getElementById('policy-retry-count').value = values.retryCount
       document.getElementById('policy-require-api-key').value = values.requireApiKey
-      document.getElementById('policy-api-keys').value = values.apiKeys
-      document.getElementById('policy-basic-auth-username').value = values.basicAuthUsername
-      document.getElementById('policy-basic-auth-password').value = values.basicAuthPassword
+      document.getElementById('policy-require-user-auth').value = values.requireUserAuth
       document.getElementById('policy-rate-limit-requests').value = values.rateLimitRequests
       document.getElementById('policy-rate-limit-window-seconds').value = values.rateLimitWindowSeconds
       document.getElementById('policy-allowed-methods').value = values.allowedMethods
@@ -1131,8 +1276,8 @@
 
       if (featureValueIsEnabled('policy-request-timeout-seconds')) addPolicyFeature('timeout')
       if (featureValueIsEnabled('policy-retry-count')) addPolicyFeature('retry')
-      if (document.getElementById('policy-require-api-key').value === 'true' || document.getElementById('policy-api-keys').value.trim() !== '') addPolicyFeature('api-key')
-      if (document.getElementById('policy-basic-auth-username').value.trim() !== '' || document.getElementById('policy-basic-auth-password').value.trim() !== '') addPolicyFeature('basic-auth')
+      if (document.getElementById('policy-require-api-key').value === 'true' || document.querySelectorAll('#policy-api-key-teams .team-option input:checked').length > 0) addPolicyFeature('api-key')
+      if (document.getElementById('policy-require-user-auth').value === 'true' || document.querySelectorAll('#policy-user-auth-teams .team-option input:checked').length > 0) addPolicyFeature('basic-auth')
       if (featureValueIsEnabled('policy-rate-limit-requests') || featureValueIsEnabled('policy-rate-limit-window-seconds')) addPolicyFeature('rate-limit')
       if (document.getElementById('policy-allowed-methods').value.trim() !== '') addPolicyFeature('methods')
       if (document.getElementById('policy-rewrite-path-prefix').value.trim() !== '') addPolicyFeature('rewrite')

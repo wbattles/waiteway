@@ -250,3 +250,4 @@ func TestStoreAddRouteNormalizesBeforeDuplicateCheck(t *testing.T) {
 		t.Fatalf("expected duplicate prefix error, got %v", err)
 	}
 }
+

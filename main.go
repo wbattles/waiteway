@@ -19,6 +19,33 @@ type Config struct {
 	ActiveTab    string
 }
 
+type User struct {
+	ID           int
+	Username     string
+	PasswordHash string
+	IsAdmin      bool
+	CreatedAt    time.Time
+}
+
+type APIKey struct {
+	ID        int
+	Key       string
+	KeyPrefix string
+	UserID    int
+	CreatedAt time.Time
+}
+
+type Team struct {
+	ID          int
+	Name        string
+	Acronym     string
+	CreatedAt   time.Time
+	CreatedByID int
+	UserCount   int
+	UserIDs     []int
+	Users       []User
+}
+
 type AdminConfig struct {
 	Username string
 	Password string
@@ -65,6 +92,10 @@ func main() {
 
 	config, err := store.LoadConfig()
 	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := store.EnsureLegacyAdmin(config.Admin.Username, config.Admin.Password); err != nil {
 		log.Fatal(err)
 	}
 
