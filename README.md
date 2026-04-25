@@ -153,7 +153,7 @@ extraEnv:
     value: /etc/waiteway/ca
 ```
 
-The certs are added to the system trust store, not replacing it.
+When the system trust store is available, these certs are appended to it. If the system pool can't be loaded, only the provided certs are used.
 
 ## Architecture
 
