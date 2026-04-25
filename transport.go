@@ -32,6 +32,9 @@ func newTunedTransport() *http.Transport {
 	}
 
 	return &http.Transport{
+		// Honor standard proxy environment variables.
+		Proxy: http.ProxyFromEnvironment,
+
 		// Use the tuned dialer above.
 		DialContext: dialer.DialContext,
 

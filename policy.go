@@ -376,6 +376,8 @@ func applyRequestHeaders(policy *compiledPolicy, r *http.Request) {
 
 var errPayloadTooLarge = fmt.Errorf("payload too large")
 
+const defaultRequestBodyProcessLimit = int64(10 << 20)
+
 func processRequestBody(policy *compiledPolicy, r *http.Request) error {
 	if policy == nil || !shouldReadBody(r.Method) {
 		return nil
@@ -387,7 +389,7 @@ func processRequestBody(policy *compiledPolicy, r *http.Request) error {
 		return nil
 	}
 
-	limit := int64(10 << 20)
+	limit := defaultRequestBodyProcessLimit + 1
 	if policy.MaxPayloadBytes > 0 {
 		limit = policy.MaxPayloadBytes + 1
 	}
@@ -395,6 +397,9 @@ func processRequestBody(policy *compiledPolicy, r *http.Request) error {
 	body, err := io.ReadAll(io.LimitReader(r.Body, limit))
 	if err != nil {
 		return err
+	}
+	if policy.MaxPayloadBytes <= 0 && int64(len(body)) > defaultRequestBodyProcessLimit {
+		return errPayloadTooLarge
 	}
 	if policy.MaxPayloadBytes > 0 && int64(len(body)) > policy.MaxPayloadBytes {
 		return errPayloadTooLarge
