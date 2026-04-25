@@ -72,6 +72,7 @@ func (g *Gateway) handleAdminDeletePolicy(w http.ResponseWriter, r *http.Request
 }
 
 func policyFromForm(r *http.Request) (Policy, error) {
+	r.ParseForm()
 	requestTimeoutSeconds, err := intFromForm(r, "policy_request_timeout_seconds")
 	if err != nil {
 		return Policy{}, err
@@ -114,9 +115,8 @@ func policyFromForm(r *http.Request) (Policy, error) {
 		RequestTimeoutSeconds:      requestTimeoutSeconds,
 		RetryCount:                 retryCount,
 		RequireAPIKey:              r.FormValue("policy_require_api_key") == "true",
-		APIKeys:                    splitLines(r.FormValue("policy_api_keys")),
-		BasicAuthUsername:          strings.TrimSpace(r.FormValue("policy_basic_auth_username")),
-		BasicAuthPassword:          r.FormValue("policy_basic_auth_password"),
+		APIKeys:                    nil,
+		RequireUserAuth:            r.FormValue("policy_require_user_auth") == "true",
 		RateLimitRequests:          rateLimitRequests,
 		RateLimitWindowSeconds:     rateLimitWindowSeconds,
 		AllowedMethods:             splitLines(strings.ToUpper(r.FormValue("policy_allowed_methods"))),

@@ -34,6 +34,9 @@ func testGateway(t *testing.T, upstream *httptest.Server, policy Policy) *httpte
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
+	if _, err := store.CreateUser("user", "pass", false); err != nil {
+		t.Fatal(err)
+	}
 
 	gw, err := newGateway(store, config)
 	if err != nil {
@@ -52,21 +55,55 @@ func TestPolicyAPIKeyAuth(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	gw := testGateway(t, upstream, Policy{
+	policy := Policy{
 		Name:          "auth",
 		RequireAPIKey: true,
-		APIKeys:       []string{"good-key"},
-	})
-	defer gw.Close()
+	}
+	config := Config{
+		Admin:    AdminConfig{Username: "admin", Password: "admin"},
+		LogLimit: 10,
+		Policies: []Policy{policy},
+		Routes: []Route{
+			{
+				Name:       "test",
+				PathPrefix: "/test",
+				Target:     upstream.URL,
+				PolicyName: policy.Name,
+			},
+		},
+	}
+
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	user, err := store.CreateUser("user", "pass", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiKey, err := store.CreateAPIKey(user.ID, "good-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = apiKey
+
+	gw, err := newGateway(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(gw.Close)
+	server := httptest.NewServer(gw.gatewayHandler())
+	defer server.Close()
 
 	// no key
-	resp, _ := http.Get(gw.URL + "/test")
+	resp, _ := http.Get(server.URL + "/test")
 	if resp.StatusCode != 401 {
 		t.Fatalf("expected 401 without key, got %d", resp.StatusCode)
 	}
 
 	// wrong key
-	req, _ := http.NewRequest("GET", gw.URL+"/test", nil)
+	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
 	req.Header.Set("X-API-Key", "bad-key")
 	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != 401 {
@@ -74,7 +111,7 @@ func TestPolicyAPIKeyAuth(t *testing.T) {
 	}
 
 	// correct key
-	req, _ = http.NewRequest("GET", gw.URL+"/test", nil)
+	req, _ = http.NewRequest("GET", server.URL+"/test", nil)
 	req.Header.Set("X-API-Key", "good-key")
 	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != 200 {
@@ -82,16 +119,15 @@ func TestPolicyAPIKeyAuth(t *testing.T) {
 	}
 }
 
-func TestPolicyBasicAuth(t *testing.T) {
+func TestPolicyUsernameAuth(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	}))
 	defer upstream.Close()
 
 	gw := testGateway(t, upstream, Policy{
-		Name:              "basic",
-		BasicAuthUsername: "user",
-		BasicAuthPassword: "pass",
+		Name:            "userauth",
+		RequireUserAuth: true,
 	})
 	defer gw.Close()
 
@@ -559,17 +595,49 @@ func TestPolicyMultipleFeatures(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	gw := testGateway(t, upstream, Policy{
+	policy := Policy{
 		Name:              "multi",
 		RequireAPIKey:     true,
-		APIKeys:           []string{"key1"},
 		AllowedMethods:    []string{"GET"},
 		AddRequestHeaders: []string{"X-Injected: yes"},
-	})
-	defer gw.Close()
+	}
+	config := Config{
+		Admin:    AdminConfig{Username: "admin", Password: "admin"},
+		LogLimit: 10,
+		Policies: []Policy{policy},
+		Routes: []Route{
+			{
+				Name:       "test",
+				PathPrefix: "/test",
+				Target:     upstream.URL,
+				PolicyName: policy.Name,
+			},
+		},
+	}
+
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	user, err := store.CreateUser("user", "pass", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateAPIKey(user.ID, "key1"); err != nil {
+		t.Fatal(err)
+	}
+
+	gw, err := newGateway(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(gw.Close)
+	server := httptest.NewServer(gw.gatewayHandler())
+	defer server.Close()
 
 	// POST with key should fail on method
-	req, _ := http.NewRequest("POST", gw.URL+"/test", nil)
+	req, _ := http.NewRequest("POST", server.URL+"/test", nil)
 	req.Header.Set("X-API-Key", "key1")
 	resp, _ := http.DefaultClient.Do(req)
 	if resp.StatusCode != 405 {
@@ -577,13 +645,13 @@ func TestPolicyMultipleFeatures(t *testing.T) {
 	}
 
 	// GET without key should fail on auth
-	resp, _ = http.Get(gw.URL + "/test")
+	resp, _ = http.Get(server.URL + "/test")
 	if resp.StatusCode != 401 {
 		t.Fatalf("expected 401 without key, got %d", resp.StatusCode)
 	}
 
 	// GET with key should pass and inject header
-	req, _ = http.NewRequest("GET", gw.URL+"/test", nil)
+	req, _ = http.NewRequest("GET", server.URL+"/test", nil)
 	req.Header.Set("X-API-Key", "key1")
 	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != 200 {

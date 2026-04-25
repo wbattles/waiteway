@@ -17,8 +17,7 @@ type Policy struct {
 	RetryCount                 int
 	RequireAPIKey              bool
 	APIKeys                    []string
-	BasicAuthUsername          string
-	BasicAuthPassword          string
+	RequireUserAuth            bool
 	RateLimitRequests          int
 	RateLimitWindowSeconds     int
 	AllowedMethods             []string
@@ -189,8 +188,8 @@ func policySummary(policy Policy) string {
 	if policy.RequireAPIKey {
 		parts = append(parts, "api key")
 	}
-	if policy.BasicAuthUsername != "" || policy.BasicAuthPassword != "" {
-		parts = append(parts, "basic auth")
+	if policy.RequireUserAuth {
+		parts = append(parts, "username auth")
 	}
 	if policy.RateLimitRequests > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%ds", policy.RateLimitRequests, policy.RateLimitWindowSeconds))

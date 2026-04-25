@@ -11,24 +11,24 @@ import (
 
 func (g *Gateway) handleAdminClearLogs(w http.ResponseWriter, r *http.Request) {
 	g.store.ClearLogs()
-	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=config", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminSaveSettings(w http.ResponseWriter, r *http.Request) {
 	config, err := settingsConfigFromForm(r, g.currentConfig())
 	if err != nil {
-		config.ActiveTab = "settings"
+		config.ActiveTab = "config"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	if err := g.saveConfig(config); err != nil {
-		config.ActiveTab = "settings"
+		config.ActiveTab = "config"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
-	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=config", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Request) {
@@ -37,19 +37,19 @@ func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Reque
 	newPassword := r.FormValue("new_password")
 
 	if currentPassword != config.Admin.Password {
-		config.ActiveTab = "settings"
+		config.ActiveTab = "config"
 		g.renderAdminForm(w, config, "", "current password is wrong")
 		return
 	}
 	if strings.TrimSpace(newPassword) == "" {
-		config.ActiveTab = "settings"
+		config.ActiveTab = "config"
 		g.renderAdminForm(w, config, "", "new password is required")
 		return
 	}
 
 	config.Admin.Password = newPassword
 	if err := g.saveConfig(config); err != nil {
-		config.ActiveTab = "settings"
+		config.ActiveTab = "config"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
@@ -66,30 +66,30 @@ func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Reque
 func (g *Gateway) handleAdminSaveLogging(w http.ResponseWriter, r *http.Request) {
 	config, err := loggingConfigFromForm(r, g.currentConfig())
 	if err != nil {
-		config.ActiveTab = "settings"
+		config.ActiveTab = "config"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	if err := g.saveConfig(config); err != nil {
-		config.ActiveTab = "settings"
+		config.ActiveTab = "config"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
-	http.Redirect(w, r, "/?tab=settings", http.StatusSeeOther)
+	http.Redirect(w, r, "/?tab=config", http.StatusSeeOther)
 }
 
 func (g *Gateway) handleAdminSaveLoadBalancer(w http.ResponseWriter, r *http.Request) {
 	config, err := loadBalancerConfigFromForm(r, g.currentConfig())
 	if err != nil {
-		config.ActiveTab = "settings"
+		config.ActiveTab = "config"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	if err := g.saveConfig(config); err != nil {
-		config.ActiveTab = "settings"
+		config.ActiveTab = "config"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
