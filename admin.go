@@ -99,6 +99,10 @@ func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
+	if !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
 	if r.Method == http.MethodPost {
 		g.handleAdminPost(w, r)
