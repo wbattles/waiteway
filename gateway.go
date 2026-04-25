@@ -627,7 +627,7 @@ func cleanForwardedIP(value string) string {
 		}
 	}
 
-	if host, _, err := strings.Cut(value, ":"); err && strings.Count(value, ":") == 1 {
+	if host, _, found := strings.Cut(value, ":"); found && strings.Count(value, ":") == 1 {
 		return strings.TrimSpace(host)
 	}
 
