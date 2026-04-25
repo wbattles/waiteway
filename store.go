@@ -409,6 +409,9 @@ func (s *Store) listAllRouteAPIKeys() (map[int][]string, error) {
 		}
 		keysByRouteID[routeID] = append(keysByRouteID[routeID], key)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return keysByRouteID, nil
 }
 
