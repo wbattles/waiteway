@@ -117,6 +117,43 @@ Read on first run only. After that, use the admin portal.
 | `WAITEWAY_ADMIN_PASSWORD` | `change-me` | admin password |
 | `WAITEWAY_LISTEN` | `:8080` | gateway listen address |
 | `WAITEWAY_ADMIN_LISTEN` | `:9090` | admin listen address |
+| `WAITEWAY_CA_CERT_FILE` | unset | path to one PEM file with extra root certs (see [Corporate certificates](#corporate-certificates)) |
+| `WAITEWAY_CA_CERT_DIR` | unset | directory of extra root cert files — `.pem`, `.crt`, or `.cer` (see [Corporate certificates](#corporate-certificates)) |
+
+## Corporate certificates
+
+If your network re-signs HTTPS traffic (Zscaler, Netskope, etc.), the container won't trust the upstream cert by default. Mount the corporate root cert and point Waiteway at it.
+
+### Docker
+
+```bash
+docker run \
+  -p 8080:8080 -p 9090:9090 \
+  -v ./data:/data \
+  -v ./corp-root.pem:/certs/corp-root.pem:ro \
+  -e WAITEWAY_CA_CERT_FILE=/certs/corp-root.pem \
+  waiteway
+```
+
+### Kubernetes
+
+Put the cert in a ConfigMap, then use the chart's `extraVolumes`, `extraVolumeMounts`, and `extraEnv`:
+
+```yaml
+extraVolumes:
+  - name: corp-ca
+    configMap:
+      name: corp-ca-bundle
+extraVolumeMounts:
+  - name: corp-ca
+    mountPath: /etc/waiteway/ca
+    readOnly: true
+extraEnv:
+  - name: WAITEWAY_CA_CERT_DIR
+    value: /etc/waiteway/ca
+```
+
+The certs are added to the system trust store, not replacing it.
 
 ## Architecture
 
