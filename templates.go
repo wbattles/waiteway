@@ -1,0 +1,1247 @@
+package main
+
+const adminTemplate = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>waiteway</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #fff; color: #000; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #000; }
+    .header-actions { display: flex; gap: 8px; }
+    .admin-main { width: 100%; max-width: 1000px; margin: 0 auto; }
+    .message { padding: 12px 24px 0 24px; font-size: 0.875rem; }
+    .modal-error { border-left: 2px solid #000; padding: 6px 10px; font-size: 0.8rem; }
+    .modal-error.hidden { display: none; }
+    .admin-tabs { display: flex; border-bottom: 1px solid #000; background: #fff; width: 100%; }
+    .tab-btn { padding: 12px 24px; border: none; border-bottom: 2px solid transparent; background: none; cursor: pointer; font-size: 0.875rem; font-family: inherit; min-width: 80px; text-align: center; }
+    .tab-btn.active { border-bottom-color: #000; }
+    .tab-content { padding: 24px; position: relative; width: 100%; }
+    .tab-panel { display: none; width: 100%; }
+    .tab-panel.active { display: block; }
+    .tab-panel h3 { font-size: 1rem; font-weight: 500; margin-bottom: 12px; }
+    .settings-panel { padding: 20px; border: 1px solid #000; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; }
+    .settings-panel form { display: flex; flex-direction: column; gap: 12px; }
+    .settings-panel label { font-size: 0.875rem; }
+    .settings-panel textarea { min-height: 90px; resize: vertical; }
+    .users-layout { display: grid; grid-template-columns: 300px 1fr; gap: 24px; }
+    .settings-left { display: flex; flex-direction: column; gap: 24px; width: 300px; }
+    .settings-right { display: flex; flex-direction: column; gap: 24px; }
+    .config-table td:nth-child(1) { width: 30%; font-size: 0.875rem; }
+    .config-table td:nth-child(2) { width: 55%; font-size: 0.875rem; }
+    .config-table td:nth-child(3) { width: 15%; text-align: right; }
+    .create-user-panel { padding: 20px; border: 1px solid #000; height: fit-content; }
+    .create-user-panel h3 { margin-bottom: 16px; }
+    .create-user-panel form { display: flex; flex-direction: column; gap: 12px; }
+    .settings-row { display: flex; align-items: center; gap: 8px; }
+    .settings-row label { flex-shrink: 0; width: 70px; }
+    .settings-panel select { width: 100%; box-sizing: border-box; }
+    .settings-panel button { margin-top: 4px; }
+    .logging-layout { display: flex; flex-direction: column; gap: 24px; min-height: 500px; }
+    .stats-grid { display: grid; grid-template-columns: 1.1fr repeat(4, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
+    .stat-card { border: 1px solid #000; padding: 10px 12px; min-height: 0; }
+    .stat-label { font-size: 0.75rem; opacity: 0.7; margin-bottom: 4px; }
+    .stat-value { font-size: 1rem; }
+    .route-stats { border: 1px solid #000; padding: 10px 12px; min-height: 0; grid-row: span 2; }
+    .route-stats-list { max-height: 96px; overflow-y: auto; }
+    .route-stats ul { list-style: none; margin: 0; }
+    .route-stats li { display: flex; align-items: center; gap: 8px; }
+    .route-stats li + li { margin-top: 8px; }
+    .route-stat-name { flex: 1; min-width: 0; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
+    .route-stat-name::-webkit-scrollbar { display: none; }
+    .route-stat-count { flex-shrink: 0; }
+    .log-panel { min-height: 0; height: 520px; }
+    .log-table-wrap { overflow-y: auto; overflow-x: hidden; height: 100%; max-height: none; }
+    .user-list-panel { border: 1px solid #000; display: flex; flex-direction: column; min-height: 500px; }
+    .user-list-panel h3 { padding: 16px 20px 0 20px; margin-bottom: 16px; border-bottom: 1px solid #000; padding-bottom: 12px; flex-shrink: 0; }
+    .panel-body { padding: 0 20px 20px 20px; flex: 1; overflow-y: auto; min-height: 0; }
+    .log-panel-body { overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { text-align: left; padding: 8px 0; border-bottom: 1px solid #000; vertical-align: top; }
+    .routes-table th:nth-child(1), .routes-table td:nth-child(1) { width: 18%; padding-right: 12px; }
+    .routes-table th:nth-child(2), .routes-table td:nth-child(2) { width: 22%; padding-right: 12px; }
+    .routes-table th:nth-child(3), .routes-table td:nth-child(3) { width: 28%; padding-right: 12px; }
+    .routes-table th:nth-child(4), .routes-table td:nth-child(4) { width: 12%; padding-right: 12px; }
+    .routes-table th:nth-child(5), .routes-table td:nth-child(5) { width: 20%; }
+    .logs-table th:nth-child(1), .logs-table td:nth-child(1) { width: 12%; padding-right: 12px; }
+    .logs-table th:nth-child(2), .logs-table td:nth-child(2) { width: 18%; padding-right: 12px; }
+    .logs-table th:nth-child(3), .logs-table td:nth-child(3) { width: 14%; padding-right: 12px; }
+    .logs-table th:nth-child(4), .logs-table td:nth-child(4) { width: 34%; padding-right: 12px; overflow: hidden; }
+    .logs-table th:nth-child(5), .logs-table td:nth-child(5) { width: 10%; padding-right: 12px; }
+    .logs-table th:nth-child(6), .logs-table td:nth-child(6) { width: 12%; }
+    .logs-table th:nth-child(5), .logs-table td:nth-child(5), .logs-table th:nth-child(6), .logs-table td:nth-child(6) { text-align: right; }
+    .scroll-cell { display: block; max-width: 100%; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
+    .scroll-cell::-webkit-scrollbar { display: none; }
+    .request-scroll { display: block; width: 100%; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch; }
+    .request-scroll::-webkit-scrollbar { display: none; }
+    .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .muted { opacity: 0.7; }
+    .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center; z-index: 10; }
+    .modal.hidden { display: none; }
+    .modal-box { background: #fff; padding: 24px; width: 420px; max-width: 90vw; border: 1px solid #000; display: flex; flex-direction: column; gap: 12px; }
+    .modal-box h2 { font-size: 0.95rem; font-weight: 500; }
+    .modal-box form { display: flex; flex-direction: column; gap: 12px; }
+    .modal-box textarea { min-height: 90px; resize: vertical; }
+    .modal-actions { display: flex; gap: 8px; }
+    .policy-modal-box { width: 720px; max-height: 90vh; overflow-y: auto; }
+    .policy-builder-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .policy-features { display: flex; flex-direction: column; gap: 12px; max-height: 52vh; overflow-y: auto; padding-right: 4px; }
+    .policy-feature-card { border: 1px solid #000; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .policy-feature-card.hidden { display: none; }
+    .policy-feature-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .policy-feature-header h3 { margin: 0; font-size: 0.95rem; font-weight: 500; }
+    .policy-feature-help { font-size: 0.8rem; opacity: 0.7; }
+    .policy-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+    .policy-field-grid.single { grid-template-columns: minmax(0, 1fr); }
+    .policy-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .policy-field label { font-size: 0.8rem; }
+    .policy-add-modal { z-index: 20; }
+    .policy-add-list { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+    .policy-add-option { width: 100%; text-align: left; padding: 12px; border: 1px solid #000; background: #fff; display: flex; flex-direction: column; gap: 4px; }
+    .policy-add-option small { opacity: 0.7; }
+    @media (max-width: 700px) {
+      .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .policy-modal-box { width: 92vw; }
+      .policy-field-grid { grid-template-columns: minmax(0, 1fr); }
+      .policy-builder-actions { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>waiteway</div>
+    <div class="header-actions">
+      <form method="post" action="/logout"><button type="submit">logout</button></form>
+    </div>
+  </header>
+  <main class="admin-main">
+    <nav class="admin-tabs">
+      <button class="tab-btn {{ if eq .ActiveTab "gateway" }}active{{ end }}" type="button" onclick="showTab('gateway', this)">gateway</button>
+      <button class="tab-btn {{ if eq .ActiveTab "policy" }}active{{ end }}" type="button" onclick="showTab('policy', this)">policy</button>
+      <button class="tab-btn {{ if eq .ActiveTab "logging" }}active{{ end }}" type="button" onclick="showTab('logging', this)">logging</button>
+      <button class="tab-btn {{ if eq .ActiveTab "settings" }}active{{ end }}" type="button" onclick="showTab('settings', this)">settings</button>
+    </nav>
+
+    <div class="tab-content">
+      <section id="gateway-tab" class="tab-panel {{ if eq .ActiveTab "gateway" }}active{{ end }}">
+        <div class="user-list-panel">
+          <h3>routes</h3>
+          <div class="panel-body">
+            <p><button type="button" onclick="openAddRoute()">add route</button></p>
+            <table class="routes-table">
+              <thead>
+                <tr>
+                  <th>name</th>
+                  <th>path</th>
+                  <th>target</th>
+                  <th>policy</th>
+                  <th>actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{ range $index, $route := .Routes }}
+                <tr>
+                  <td><span class="scroll-cell">{{ $route.Name }}</span></td>
+                  <td><span class="scroll-cell">{{ $route.PathPrefix }}</span></td>
+                  <td><span class="scroll-cell">{{ $route.Target }}</span></td>
+                  <td>{{ routePolicyLabel $route }}</td>
+                  <td>
+                    <div class="row-actions">
+                      <button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-policy-name="{{ $route.PolicyName }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" onclick="openEditRouteButton(this)">edit</button>
+                      <form method="post" action="/">
+                        <input type="hidden" name="action" value="delete_route">
+                        <input type="hidden" name="route_index" value="{{ $index }}">
+                        <button type="submit">delete</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="policy-tab" class="tab-panel {{ if eq .ActiveTab "policy" }}active{{ end }}">
+        <div class="user-list-panel">
+          <h3>policies</h3>
+          <div class="panel-body">
+            <p><button type="button" onclick="openAddPolicy()">add policy</button></p>
+            <table class="routes-table">
+              <thead>
+                <tr>
+                  <th>name</th>
+                  <th>details</th>
+                  <th>actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{ range $index, $policy := .Policies }}
+                <tr>
+                  <td><span class="scroll-cell">{{ $policy.Name }}</span></td>
+                  <td><span class="scroll-cell">{{ policySummary $policy }}</span></td>
+                  <td>
+                    <div class="row-actions">
+                      <button type="button" data-policy-index="{{ $index }}" data-policy-name="{{ $policy.Name }}" data-policy-request-timeout-seconds="{{ $policy.RequestTimeoutSeconds }}" data-policy-retry-count="{{ $policy.RetryCount }}" data-policy-require-api-key="{{ if $policy.RequireAPIKey }}true{{ else }}false{{ end }}" data-policy-api-keys="{{ range $i, $key := $policy.APIKeys }}{{ if $i }}&#10;{{ end }}{{ $key }}{{ end }}" data-policy-basic-auth-username="{{ $policy.BasicAuthUsername }}" data-policy-basic-auth-password="{{ $policy.BasicAuthPassword }}" data-policy-rate-limit-requests="{{ $policy.RateLimitRequests }}" data-policy-rate-limit-window-seconds="{{ $policy.RateLimitWindowSeconds }}" data-policy-allowed-methods="{{ range $i, $item := $policy.AllowedMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-rewrite-path-prefix="{{ $policy.RewritePathPrefix }}" data-policy-add-request-headers="{{ range $i, $item := $policy.AddRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-request-headers="{{ range $i, $item := $policy.RemoveRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-max-payload-bytes="{{ $policy.MaxPayloadBytes }}" data-policy-request-transform-find="{{ $policy.RequestTransformFind }}" data-policy-request-transform-replace="{{ $policy.RequestTransformReplace }}" data-policy-cache-ttl-seconds="{{ $policy.CacheTTLSeconds }}" data-policy-add-response-headers="{{ range $i, $item := $policy.AddResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-remove-response-headers="{{ range $i, $item := $policy.RemoveResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-response-transform-find="{{ $policy.ResponseTransformFind }}" data-policy-response-transform-replace="{{ $policy.ResponseTransformReplace }}" data-policy-max-response-bytes="{{ $policy.MaxResponseBytes }}" data-policy-cors-allow-origins="{{ range $i, $item := $policy.CORSAllowOrigins }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-methods="{{ range $i, $item := $policy.CORSAllowMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-cors-allow-headers="{{ range $i, $item := $policy.CORSAllowHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-allow-list="{{ range $i, $item := $policy.IPAllowList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-ip-block-list="{{ range $i, $item := $policy.IPBlockList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}" data-policy-circuit-breaker-failures="{{ $policy.CircuitBreakerFailures }}" data-policy-circuit-breaker-reset-seconds="{{ $policy.CircuitBreakerResetSeconds }}" onclick="openEditPolicyButton(this)">edit</button>
+                      <form method="post" action="/">
+                        <input type="hidden" name="action" value="delete_policy">
+                        <input type="hidden" name="policy_index" value="{{ $index }}">
+                        <button type="submit">delete</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                {{ else }}
+                <tr><td colspan="3" class="muted">no policies yet</td></tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="logging-tab" class="tab-panel {{ if eq .ActiveTab "logging" }}active{{ end }}">
+        <div class="logging-layout">
+          <div class="stats-grid">
+            <div class="route-stats">
+              <h3>top routes</h3>
+              <div class="route-stats-list">
+                <ul>
+                  {{ range .RouteStats }}
+                  <li><span class="route-stat-name">{{ .Name }}</span><span class="route-stat-count">{{ .Count }}</span></li>
+                  {{ else }}
+                  <li class="muted">no requests yet</li>
+                  {{ end }}
+                </ul>
+              </div>
+            </div>
+            <div class="stat-card"><div class="stat-label">recent requests</div><div class="stat-value">{{ .LogStats.Total }}</div></div>
+            <div class="stat-card"><div class="stat-label">errors</div><div class="stat-value">{{ .LogStats.Errors }}</div></div>
+            <div class="stat-card"><div class="stat-label">unauthorized</div><div class="stat-value">{{ .LogStats.Unauthorized }}</div></div>
+            <div class="stat-card"><div class="stat-label">successful</div><div class="stat-value">{{ .LogStats.Success }}</div></div>
+            <div class="stat-card"><div class="stat-label">unique routes</div><div class="stat-value">{{ .LogStats.UniqueRoutes }}</div></div>
+            <div class="stat-card"><div class="stat-label">error rate</div><div class="stat-value">{{ formatPercent .LogStats.ErrorRate }}</div></div>
+            <div class="stat-card"><div class="stat-label">avg duration</div><div class="stat-value">{{ formatDurationMS .LogStats.Average }}</div></div>
+            <div class="stat-card"><div class="stat-label">slowest</div><div class="stat-value">{{ formatDurationMS .LogStats.Slowest }}</div></div>
+          </div>
+
+          <div class="user-list-panel log-panel">
+            <h3>recent requests</h3>
+            <div class="panel-body log-panel-body">
+              <div class="log-table-wrap">
+				  <table class="logs-table">
+				    <thead>
+				      <tr>
+				        <th>time</th>
+				        <th>ip</th>
+				        <th>route</th>
+				        <th>request</th>
+				        <th>status</th>
+				        <th>duration</th>
+                  </tr>
+                </thead>
+                <tbody>
+				      {{ range .Logs }}
+				      <tr>
+				        <td>{{ .Time.Format "15:04:05" }}</td>
+				        <td><span class="scroll-cell">{{ formatClientIP .RemoteAddr $.LoadBalancerStripPort }}</span></td>
+				        <td><span class="scroll-cell">{{ .Route }}</span></td>
+				        <td><span class="request-scroll">{{ .Method }} {{ .Path }}</span></td>
+				        <td>{{ .Status }}</td>
+				        <td>{{ formatDurationMS .Duration }}</td>
+				      </tr>
+				      {{ else }}
+				      <tr><td colspan="6" class="muted">no requests yet</td></tr>
+				    {{ end }}
+              </tbody>
+              </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="settings-tab" class="tab-panel {{ if eq .ActiveTab "settings" }}active{{ end }}">
+        <div class="users-layout">
+          <div class="create-user-panel">
+            <h3>admin account</h3>
+            <form method="post" action="/?tab=settings">
+              <input type="hidden" name="action" value="save_settings">
+              <input type="text" name="admin_username" value="{{ .AdminUsername }}" placeholder="admin username">
+              <button type="submit">save username</button>
+            </form>
+            <form method="post" action="/?tab=settings">
+              <input type="hidden" name="action" value="change_password">
+              <input type="password" name="current_password" placeholder="current password" required>
+              <input type="password" name="new_password" placeholder="new password" required>
+              <button type="submit">save password</button>
+            </form>
+          </div>
+
+          <div class="settings-right">
+            <div class="user-list-panel" style="min-height: 0; height: auto;">
+              <h3>load balancer</h3>
+              <div class="panel-body">
+                <form method="post" action="/?tab=settings" style="display: flex; flex-direction: column; gap: 16px;">
+                  <input type="hidden" name="action" value="save_load_balancer">
+                  <table class="config-table">
+                    <tbody>
+                      <tr>
+                        <td><strong>mode</strong></td>
+                        <td>
+                          <select id="load-balancer-mode" name="load_balancer_mode" onchange="toggleLoadBalancerHeader()">
+                            <option value="direct" {{ if eq .LoadBalancerMode "direct" }}selected{{ end }}>direct</option>
+                            <option value="standard" {{ if eq .LoadBalancerMode "standard" }}selected{{ end }}>standard</option>
+                            <option value="cloudflare" {{ if eq .LoadBalancerMode "cloudflare" }}selected{{ end }}>cloudflare</option>
+                            <option value="custom" {{ if eq .LoadBalancerMode "custom" }}selected{{ end }}>custom</option>
+                          </select>
+                        </td>
+                        <td></td>
+                      </tr>
+                      <tr id="load-balancer-header-row" {{ if ne .LoadBalancerMode "custom" }}style="display:none"{{ end }}>
+                        <td><strong>client ip header</strong></td>
+                        <td><input id="load-balancer-header" type="text" name="load_balancer_client_ip_header" value="{{ .LoadBalancerHeader }}"></td>
+                        <td></td>
+                      </tr>
+                      <tr>
+                        <td><strong>strip port from ip</strong></td>
+                        <td>
+                          <select id="load-balancer-strip-port" name="load_balancer_strip_port">
+                            <option value="true" {{ if .LoadBalancerStripPort }}selected{{ end }}>yes</option>
+                            <option value="false" {{ if not .LoadBalancerStripPort }}selected{{ end }}>no</option>
+                          </select>
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <button type="submit">save load balancer</button>
+                </form>
+
+                <table class="config-table" style="margin-top: 16px;">
+                  <tbody>
+                    <tr>
+                      <td><strong>header order</strong></td>
+                      <td>{{ .LoadBalancerHeaders }}</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>gateway listen</strong></td>
+                      <td>{{ .GatewayListen }}</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>gateway health</strong></td>
+                      <td>{{ .GatewayListen }}/health</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>admin listen</strong></td>
+                      <td>{{ .AdminListen }}</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>admin health</strong></td>
+                      <td>{{ .AdminListen }}/health</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="user-list-panel" style="min-height: 0; height: auto;">
+              <h3>gateway config</h3>
+              <div class="panel-body">
+                <table class="config-table">
+                  <tbody>
+                    <tr>
+                      <td><strong>log limit</strong></td>
+                      <td>{{ .LogLimit }}</td>
+                      <td><button type="button" onclick="openSettingsModal('log_limit', '{{ .LogLimit }}')">edit</button></td>
+                    </tr>
+                    <tr>
+                      <td><strong>routes</strong></td>
+                      <td>{{ len .Routes }} ({{ .ProtectedRoutes }} using policy, {{ .OpenRoutes }} open)</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>policies</strong></td>
+                      <td>{{ len .Policies }}</td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td><strong>uptime</strong></td>
+                      <td>{{ .Uptime }}</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div style="margin-top: 16px">
+                  <form method="post" action="/?tab=settings" style="display:inline">
+                    <input type="hidden" name="action" value="clear_logs">
+                    <button type="submit">clear logs</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="route-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2 id="route-modal-title">add route</h2>
+      <form id="route-form" method="post" action="/">
+        <div id="route-modal-error" class="modal-error hidden"></div>
+        <input type="hidden" id="route-action" name="action" value="add_route">
+        <input type="hidden" id="route-index" name="route_index" value="">
+        <label for="route-name">name</label>
+        <input id="route-name" type="text" name="route_name" value="" required>
+        <label for="route-path-prefix">path prefix</label>
+        <input id="route-path-prefix" type="text" name="route_path_prefix" value="" required placeholder="/api/example">
+        <label for="route-target">target</label>
+        <input id="route-target" type="url" name="route_target" value="" required placeholder="https://example.com">
+        <div class="settings-row">
+          <label for="route-policy-name">policy</label>
+          <select id="route-policy-name" name="route_policy_name">
+            <option value="">none</option>
+            {{ range .Policies }}
+            <option value="{{ .Name }}">{{ .Name }}</option>
+            {{ end }}
+          </select>
+        </div>
+        <div class="settings-row">
+          <label for="route-strip-prefix">strip</label>
+          <select id="route-strip-prefix" name="route_strip_prefix">
+            <option value="false">no</option>
+            <option value="true">yes</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="submit">save</button>
+          <button type="button" onclick="closeRouteModal()">cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2 id="settings-modal-title">edit setting</h2>
+      <form method="post" action="/?tab=settings">
+        <input type="hidden" id="settings-action" name="action" value="save_logging">
+        <input id="settings-value" type="text" name="" value="">
+        <div class="modal-actions">
+          <button type="submit">save</button>
+          <button type="button" onclick="closeSettingsModal()">cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="policy-modal" class="modal hidden">
+    <div class="modal-box policy-modal-box">
+      <h2 id="policy-modal-title">add policy</h2>
+      <form id="policy-form" method="post" action="/">
+        <input type="hidden" id="policy-action" name="action" value="add_policy">
+        <input type="hidden" id="policy-index" name="policy_index" value="">
+        <label for="policy-name">name</label>
+        <input id="policy-name" type="text" name="policy_name" value="" required>
+        <div class="policy-builder-actions">
+          <div class="policy-feature-help">add only the pieces you want</div>
+          <button type="button" onclick="openPolicyAddModal()">add feature</button>
+        </div>
+        <div id="policy-features" class="policy-features">
+          <section id="feature-timeout" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>request timeout</h3>
+              <button type="button" onclick="removePolicyFeature('timeout')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-request-timeout-seconds">timeout seconds</label>
+                <input id="policy-request-timeout-seconds" type="number" name="policy_request_timeout_seconds" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-retry" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>retry</h3>
+              <button type="button" onclick="removePolicyFeature('retry')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-retry-count">retry count</label>
+                <input id="policy-retry-count" type="number" name="policy_retry_count" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-api-key" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>api key auth</h3>
+              <button type="button" onclick="removePolicyFeature('api-key')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-require-api-key">mode</label>
+                <select id="policy-require-api-key" name="policy_require_api_key">
+                  <option value="false">off</option>
+                  <option value="true">on</option>
+                </select>
+              </div>
+              <div class="policy-field">
+                <label for="policy-api-keys">api keys</label>
+                <textarea id="policy-api-keys" name="policy_api_keys" placeholder="one key per line"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-basic-auth" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>basic auth</h3>
+              <button type="button" onclick="removePolicyFeature('basic-auth')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-basic-auth-username">username</label>
+                <input id="policy-basic-auth-username" type="text" name="policy_basic_auth_username" value="">
+              </div>
+              <div class="policy-field">
+                <label for="policy-basic-auth-password">password</label>
+                <input id="policy-basic-auth-password" type="password" name="policy_basic_auth_password" value="">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-rate-limit" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>rate limiting</h3>
+              <button type="button" onclick="removePolicyFeature('rate-limit')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-rate-limit-requests">requests</label>
+                <input id="policy-rate-limit-requests" type="number" name="policy_rate_limit_requests" value="" min="0">
+              </div>
+              <div class="policy-field">
+                <label for="policy-rate-limit-window-seconds">window seconds</label>
+                <input id="policy-rate-limit-window-seconds" type="number" name="policy_rate_limit_window_seconds" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-methods" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>method allow list</h3>
+              <button type="button" onclick="removePolicyFeature('methods')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-allowed-methods">methods</label>
+                <textarea id="policy-allowed-methods" name="policy_allowed_methods" placeholder="one method per line"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-rewrite" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>path rewrite</h3>
+              <button type="button" onclick="removePolicyFeature('rewrite')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-rewrite-path-prefix">new path prefix</label>
+                <input id="policy-rewrite-path-prefix" type="text" name="policy_rewrite_path_prefix" value="">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-request-headers" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>request headers</h3>
+              <button type="button" onclick="removePolicyFeature('request-headers')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-add-request-headers">add headers</label>
+                <textarea id="policy-add-request-headers" name="policy_add_request_headers" placeholder="Header-Name: value"></textarea>
+              </div>
+              <div class="policy-field">
+                <label for="policy-remove-request-headers">remove headers</label>
+                <textarea id="policy-remove-request-headers" name="policy_remove_request_headers" placeholder="Header-Name"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-payload-limit" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>payload limit</h3>
+              <button type="button" onclick="removePolicyFeature('payload-limit')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-max-payload-bytes">max payload bytes</label>
+                <input id="policy-max-payload-bytes" type="number" name="policy_max_payload_bytes" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-request-transform" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>request transform</h3>
+              <button type="button" onclick="removePolicyFeature('request-transform')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-request-transform-find">find</label>
+                <input id="policy-request-transform-find" type="text" name="policy_request_transform_find" value="">
+              </div>
+              <div class="policy-field">
+                <label for="policy-request-transform-replace">replace</label>
+                <input id="policy-request-transform-replace" type="text" name="policy_request_transform_replace" value="">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-cache" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>caching</h3>
+              <button type="button" onclick="removePolicyFeature('cache')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-cache-ttl-seconds">cache ttl seconds</label>
+                <input id="policy-cache-ttl-seconds" type="number" name="policy_cache_ttl_seconds" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-response-headers" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>response headers</h3>
+              <button type="button" onclick="removePolicyFeature('response-headers')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-add-response-headers">add headers</label>
+                <textarea id="policy-add-response-headers" name="policy_add_response_headers" placeholder="Header-Name: value"></textarea>
+              </div>
+              <div class="policy-field">
+                <label for="policy-remove-response-headers">remove headers</label>
+                <textarea id="policy-remove-response-headers" name="policy_remove_response_headers" placeholder="Header-Name"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-response-transform" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>response transform</h3>
+              <button type="button" onclick="removePolicyFeature('response-transform')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-response-transform-find">find</label>
+                <input id="policy-response-transform-find" type="text" name="policy_response_transform_find" value="">
+              </div>
+              <div class="policy-field">
+                <label for="policy-response-transform-replace">replace</label>
+                <input id="policy-response-transform-replace" type="text" name="policy_response_transform_replace" value="">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-response-limit" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>response size limit</h3>
+              <button type="button" onclick="removePolicyFeature('response-limit')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-max-response-bytes">max response bytes</label>
+                <input id="policy-max-response-bytes" type="number" name="policy_max_response_bytes" value="" min="0">
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-cors" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>cors</h3>
+              <button type="button" onclick="removePolicyFeature('cors')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-cors-allow-origins">allow origins</label>
+                <textarea id="policy-cors-allow-origins" name="policy_cors_allow_origins" placeholder="one origin per line"></textarea>
+              </div>
+              <div class="policy-field">
+                <label for="policy-cors-allow-methods">allow methods</label>
+                <textarea id="policy-cors-allow-methods" name="policy_cors_allow_methods" placeholder="one method per line"></textarea>
+              </div>
+              <div class="policy-field">
+                <label for="policy-cors-allow-headers">allow headers</label>
+                <textarea id="policy-cors-allow-headers" name="policy_cors_allow_headers" placeholder="one header per line"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-ip-allow" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>ip allow list</h3>
+              <button type="button" onclick="removePolicyFeature('ip-allow')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-ip-allow-list">allowed ips or cidrs</label>
+                <textarea id="policy-ip-allow-list" name="policy_ip_allow_list" placeholder="one ip or cidr per line"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-ip-block" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>ip block list</h3>
+              <button type="button" onclick="removePolicyFeature('ip-block')">remove</button>
+            </div>
+            <div class="policy-field-grid single">
+              <div class="policy-field">
+                <label for="policy-ip-block-list">blocked ips or cidrs</label>
+                <textarea id="policy-ip-block-list" name="policy_ip_block_list" placeholder="one ip or cidr per line"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section id="feature-circuit-breaker" class="policy-feature-card hidden">
+            <div class="policy-feature-header">
+              <h3>circuit breaker</h3>
+              <button type="button" onclick="removePolicyFeature('circuit-breaker')">remove</button>
+            </div>
+            <div class="policy-field-grid">
+              <div class="policy-field">
+                <label for="policy-circuit-breaker-failures">failures</label>
+                <input id="policy-circuit-breaker-failures" type="number" name="policy_circuit_breaker_failures" value="" min="0">
+              </div>
+              <div class="policy-field">
+                <label for="policy-circuit-breaker-reset-seconds">reset seconds</label>
+                <input id="policy-circuit-breaker-reset-seconds" type="number" name="policy_circuit_breaker_reset_seconds" value="" min="0">
+              </div>
+            </div>
+          </section>
+        </div>
+        <div class="modal-actions">
+          <button type="submit">save</button>
+          <button type="button" onclick="closePolicyModal()">cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="policy-add-modal" class="modal policy-add-modal hidden">
+    <div class="modal-box">
+      <h2>add policy feature</h2>
+      <div class="policy-add-list">
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('timeout')"><strong>request timeout</strong><small>stop slow upstream calls</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('retry')"><strong>retry</strong><small>retry network failures a few times</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('api-key')"><strong>api key auth</strong><small>require a key and optionally list allowed keys</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('basic-auth')"><strong>basic auth</strong><small>protect with username and password</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('rate-limit')"><strong>rate limiting</strong><small>limit requests in a time window</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('methods')"><strong>method allow list</strong><small>allow only specific HTTP methods</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('rewrite')"><strong>path rewrite</strong><small>replace the matched route prefix</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('request-headers')"><strong>request headers</strong><small>add or remove headers before proxying</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('payload-limit')"><strong>payload limit</strong><small>reject bodies over a size limit</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('request-transform')"><strong>request transform</strong><small>simple request body find and replace</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('cache')"><strong>caching</strong><small>cache successful GET responses</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('response-headers')"><strong>response headers</strong><small>add or remove response headers</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('response-transform')"><strong>response transform</strong><small>simple response body find and replace</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('response-limit')"><strong>response size limit</strong><small>reject oversized upstream responses</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('cors')"><strong>cors</strong><small>set allowed origins, methods, and headers</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('ip-allow')"><strong>ip allow list</strong><small>only allow listed ips or cidrs</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('ip-block')"><strong>ip block list</strong><small>deny listed ips or cidrs</small></button>
+        <button type="button" class="policy-add-option" onclick="addPolicyFeature('circuit-breaker')"><strong>circuit breaker</strong><small>pause a failing upstream for a short time</small></button>
+      </div>
+      <div class="modal-actions">
+        <button type="button" onclick="closePolicyAddModal()">close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var settingsFieldMap = {
+      'log_limit': { title: 'edit log limit', action: 'save_logging' }
+    }
+
+    var existingPolicyNames = [{{ range $index, $policy := .Policies }}{{ if $index }}, {{ end }}{{ printf "%q" $policy.Name }}{{ end }}]
+    var existingRoutePathPrefixes = [{{ range $index, $route := .Routes }}{{ if $index }}, {{ end }}{{ printf "%q" $route.PathPrefix }}{{ end }}]
+
+    var policyFeatureMap = {
+      'timeout': {
+        cardId: 'feature-timeout',
+        reset: function () {
+          document.getElementById('policy-request-timeout-seconds').value = ''
+        }
+      },
+      'retry': {
+        cardId: 'feature-retry',
+        reset: function () {
+          document.getElementById('policy-retry-count').value = ''
+        }
+      },
+      'api-key': {
+        cardId: 'feature-api-key',
+        reset: function () {
+          document.getElementById('policy-require-api-key').value = 'false'
+          document.getElementById('policy-api-keys').value = ''
+        }
+      },
+      'basic-auth': {
+        cardId: 'feature-basic-auth',
+        reset: function () {
+          document.getElementById('policy-basic-auth-username').value = ''
+          document.getElementById('policy-basic-auth-password').value = ''
+        }
+      },
+      'rate-limit': {
+        cardId: 'feature-rate-limit',
+        reset: function () {
+          document.getElementById('policy-rate-limit-requests').value = ''
+          document.getElementById('policy-rate-limit-window-seconds').value = ''
+        }
+      },
+      'methods': {
+        cardId: 'feature-methods',
+        reset: function () {
+          document.getElementById('policy-allowed-methods').value = ''
+        }
+      },
+      'rewrite': {
+        cardId: 'feature-rewrite',
+        reset: function () {
+          document.getElementById('policy-rewrite-path-prefix').value = ''
+        }
+      },
+      'request-headers': {
+        cardId: 'feature-request-headers',
+        reset: function () {
+          document.getElementById('policy-add-request-headers').value = ''
+          document.getElementById('policy-remove-request-headers').value = ''
+        }
+      },
+      'payload-limit': {
+        cardId: 'feature-payload-limit',
+        reset: function () {
+          document.getElementById('policy-max-payload-bytes').value = ''
+        }
+      },
+      'request-transform': {
+        cardId: 'feature-request-transform',
+        reset: function () {
+          document.getElementById('policy-request-transform-find').value = ''
+          document.getElementById('policy-request-transform-replace').value = ''
+        }
+      },
+      'cache': {
+        cardId: 'feature-cache',
+        reset: function () {
+          document.getElementById('policy-cache-ttl-seconds').value = ''
+        }
+      },
+      'response-headers': {
+        cardId: 'feature-response-headers',
+        reset: function () {
+          document.getElementById('policy-add-response-headers').value = ''
+          document.getElementById('policy-remove-response-headers').value = ''
+        }
+      },
+      'response-transform': {
+        cardId: 'feature-response-transform',
+        reset: function () {
+          document.getElementById('policy-response-transform-find').value = ''
+          document.getElementById('policy-response-transform-replace').value = ''
+        }
+      },
+      'response-limit': {
+        cardId: 'feature-response-limit',
+        reset: function () {
+          document.getElementById('policy-max-response-bytes').value = ''
+        }
+      },
+      'cors': {
+        cardId: 'feature-cors',
+        reset: function () {
+          document.getElementById('policy-cors-allow-origins').value = ''
+          document.getElementById('policy-cors-allow-methods').value = ''
+          document.getElementById('policy-cors-allow-headers').value = ''
+        }
+      },
+      'ip-allow': {
+        cardId: 'feature-ip-allow',
+        reset: function () {
+          document.getElementById('policy-ip-allow-list').value = ''
+        }
+      },
+      'ip-block': {
+        cardId: 'feature-ip-block',
+        reset: function () {
+          document.getElementById('policy-ip-block-list').value = ''
+        }
+      },
+      'circuit-breaker': {
+        cardId: 'feature-circuit-breaker',
+        reset: function () {
+          document.getElementById('policy-circuit-breaker-failures').value = ''
+          document.getElementById('policy-circuit-breaker-reset-seconds').value = ''
+        }
+      }
+    }
+
+    function openSettingsModal(field, currentValue) {
+      var info = settingsFieldMap[field]
+      document.getElementById('settings-modal-title').textContent = info.title
+      document.getElementById('settings-action').value = info.action
+      var input = document.getElementById('settings-value')
+      input.name = field
+      input.value = currentValue
+      if (field === 'log_limit') input.type = 'number'
+      else input.type = 'text'
+      document.getElementById('settings-modal').classList.remove('hidden')
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('settings-modal').classList.add('hidden')
+    }
+
+    function toggleLoadBalancerHeader() {
+      var mode = document.getElementById('load-balancer-mode')
+      var row = document.getElementById('load-balancer-header-row')
+      if (!mode || !row) return
+      row.style.display = mode.value === 'custom' ? 'table-row' : 'none'
+    }
+
+    function showTab(name, button) {
+      document.querySelectorAll('.tab-btn').forEach((button) => button.classList.remove('active'))
+      document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'))
+      button.classList.add('active')
+      document.getElementById(name + '-tab').classList.add('active')
+      var nextURL = new URL(window.location.href)
+      if (name === 'gateway') nextURL.searchParams.delete('tab')
+      else nextURL.searchParams.set('tab', name)
+      window.history.replaceState({}, '', nextURL.toString())
+    }
+
+    function showRouteError(msg) {
+      var el = document.getElementById('route-modal-error')
+      el.textContent = msg
+      el.classList.remove('hidden')
+    }
+
+    function clearRouteError() {
+      var el = document.getElementById('route-modal-error')
+      el.textContent = ''
+      el.classList.add('hidden')
+    }
+
+    function openAddRoute() {
+      document.getElementById('route-modal-title').textContent = 'add route'
+      document.getElementById('route-action').value = 'add_route'
+      document.getElementById('route-index').value = ''
+      document.getElementById('route-name').value = ''
+      document.getElementById('route-path-prefix').value = ''
+      document.getElementById('route-target').value = ''
+      document.getElementById('route-policy-name').value = ''
+      document.getElementById('route-strip-prefix').value = 'false'
+      clearRouteError()
+      document.getElementById('route-modal').classList.remove('hidden')
+    }
+
+    function openEditRouteButton(button) {
+      const data = button.dataset
+      document.getElementById('route-modal-title').textContent = 'edit route'
+      document.getElementById('route-action').value = 'update_route'
+      document.getElementById('route-index').value = data.routeIndex
+      document.getElementById('route-name').value = data.routeName
+      document.getElementById('route-path-prefix').value = data.routePathPrefix
+      document.getElementById('route-target').value = data.routeTarget
+      document.getElementById('route-policy-name').value = data.routePolicyName
+      document.getElementById('route-strip-prefix').value = data.routeStripPrefix
+      clearRouteError()
+      document.getElementById('route-modal').classList.remove('hidden')
+    }
+
+    function closeRouteModal() {
+      clearRouteError()
+      document.getElementById('route-modal').classList.add('hidden')
+    }
+
+    toggleLoadBalancerHeader()
+
+    function openAddPolicy() {
+      document.getElementById('policy-modal-title').textContent = 'add policy'
+      document.getElementById('policy-action').value = 'add_policy'
+      document.getElementById('policy-index').value = ''
+      document.getElementById('policy-name').value = ''
+      resetPolicyFeatures()
+      document.getElementById('policy-modal').classList.remove('hidden')
+    }
+
+    function openEditPolicyButton(button) {
+      const data = button.dataset
+      document.getElementById('policy-modal-title').textContent = 'edit policy'
+      document.getElementById('policy-action').value = 'update_policy'
+      document.getElementById('policy-index').value = data.policyIndex
+      document.getElementById('policy-name').value = data.policyName
+      document.getElementById('policy-request-timeout-seconds').value = data.policyRequestTimeoutSeconds
+      document.getElementById('policy-retry-count').value = data.policyRetryCount
+      document.getElementById('policy-require-api-key').value = data.policyRequireApiKey
+      document.getElementById('policy-api-keys').value = data.policyApiKeys
+      document.getElementById('policy-basic-auth-username').value = data.policyBasicAuthUsername
+      document.getElementById('policy-basic-auth-password').value = data.policyBasicAuthPassword
+      document.getElementById('policy-rate-limit-requests').value = data.policyRateLimitRequests
+      document.getElementById('policy-rate-limit-window-seconds').value = data.policyRateLimitWindowSeconds
+      document.getElementById('policy-allowed-methods').value = data.policyAllowedMethods
+      document.getElementById('policy-rewrite-path-prefix').value = data.policyRewritePathPrefix
+      document.getElementById('policy-add-request-headers').value = data.policyAddRequestHeaders
+      document.getElementById('policy-remove-request-headers').value = data.policyRemoveRequestHeaders
+      document.getElementById('policy-max-payload-bytes').value = data.policyMaxPayloadBytes
+      document.getElementById('policy-request-transform-find').value = data.policyRequestTransformFind
+      document.getElementById('policy-request-transform-replace').value = data.policyRequestTransformReplace
+      document.getElementById('policy-cache-ttl-seconds').value = data.policyCacheTtlSeconds
+      document.getElementById('policy-add-response-headers').value = data.policyAddResponseHeaders
+      document.getElementById('policy-remove-response-headers').value = data.policyRemoveResponseHeaders
+      document.getElementById('policy-response-transform-find').value = data.policyResponseTransformFind
+      document.getElementById('policy-response-transform-replace').value = data.policyResponseTransformReplace
+      document.getElementById('policy-max-response-bytes').value = data.policyMaxResponseBytes
+      document.getElementById('policy-cors-allow-origins').value = data.policyCorsAllowOrigins
+      document.getElementById('policy-cors-allow-methods').value = data.policyCorsAllowMethods
+      document.getElementById('policy-cors-allow-headers').value = data.policyCorsAllowHeaders
+      document.getElementById('policy-ip-allow-list').value = data.policyIpAllowList
+      document.getElementById('policy-ip-block-list').value = data.policyIpBlockList
+      document.getElementById('policy-circuit-breaker-failures').value = data.policyCircuitBreakerFailures
+      document.getElementById('policy-circuit-breaker-reset-seconds').value = data.policyCircuitBreakerResetSeconds
+      syncPolicyFeaturesFromValues()
+      document.getElementById('policy-modal').classList.remove('hidden')
+    }
+
+    function closePolicyModal() {
+      document.getElementById('policy-modal').classList.add('hidden')
+      closePolicyAddModal()
+    }
+
+    function openPolicyAddModal() {
+      document.getElementById('policy-add-modal').classList.remove('hidden')
+    }
+
+    function closePolicyAddModal() {
+      document.getElementById('policy-add-modal').classList.add('hidden')
+    }
+
+    function addPolicyFeature(name) {
+      var feature = policyFeatureMap[name]
+      if (!feature) return
+      document.getElementById(feature.cardId).classList.remove('hidden')
+      closePolicyAddModal()
+    }
+
+    function removePolicyFeature(name) {
+      var feature = policyFeatureMap[name]
+      if (!feature) return
+      feature.reset()
+      document.getElementById(feature.cardId).classList.add('hidden')
+    }
+
+    function resetPolicyFeatures() {
+      Object.keys(policyFeatureMap).forEach(function (name) {
+        policyFeatureMap[name].reset()
+        document.getElementById(policyFeatureMap[name].cardId).classList.add('hidden')
+      })
+    }
+
+    function hidePolicyFeatures() {
+      Object.keys(policyFeatureMap).forEach(function (name) {
+        document.getElementById(policyFeatureMap[name].cardId).classList.add('hidden')
+      })
+    }
+
+    function syncPolicyFeaturesFromValues() {
+      var values = {
+        requestTimeoutSeconds: document.getElementById('policy-request-timeout-seconds').value,
+        retryCount: document.getElementById('policy-retry-count').value,
+        requireApiKey: document.getElementById('policy-require-api-key').value,
+        apiKeys: document.getElementById('policy-api-keys').value,
+        basicAuthUsername: document.getElementById('policy-basic-auth-username').value,
+        basicAuthPassword: document.getElementById('policy-basic-auth-password').value,
+        rateLimitRequests: document.getElementById('policy-rate-limit-requests').value,
+        rateLimitWindowSeconds: document.getElementById('policy-rate-limit-window-seconds').value,
+        allowedMethods: document.getElementById('policy-allowed-methods').value,
+        rewritePathPrefix: document.getElementById('policy-rewrite-path-prefix').value,
+        addRequestHeaders: document.getElementById('policy-add-request-headers').value,
+        removeRequestHeaders: document.getElementById('policy-remove-request-headers').value,
+        maxPayloadBytes: document.getElementById('policy-max-payload-bytes').value,
+        requestTransformFind: document.getElementById('policy-request-transform-find').value,
+        requestTransformReplace: document.getElementById('policy-request-transform-replace').value,
+        cacheTTLSeconds: document.getElementById('policy-cache-ttl-seconds').value,
+        addResponseHeaders: document.getElementById('policy-add-response-headers').value,
+        removeResponseHeaders: document.getElementById('policy-remove-response-headers').value,
+        responseTransformFind: document.getElementById('policy-response-transform-find').value,
+        responseTransformReplace: document.getElementById('policy-response-transform-replace').value,
+        maxResponseBytes: document.getElementById('policy-max-response-bytes').value,
+        corsAllowOrigins: document.getElementById('policy-cors-allow-origins').value,
+        corsAllowMethods: document.getElementById('policy-cors-allow-methods').value,
+        corsAllowHeaders: document.getElementById('policy-cors-allow-headers').value,
+        ipAllowList: document.getElementById('policy-ip-allow-list').value,
+        ipBlockList: document.getElementById('policy-ip-block-list').value,
+        circuitBreakerFailures: document.getElementById('policy-circuit-breaker-failures').value,
+        circuitBreakerResetSeconds: document.getElementById('policy-circuit-breaker-reset-seconds').value
+      }
+
+      hidePolicyFeatures()
+
+      document.getElementById('policy-request-timeout-seconds').value = values.requestTimeoutSeconds
+      document.getElementById('policy-retry-count').value = values.retryCount
+      document.getElementById('policy-require-api-key').value = values.requireApiKey
+      document.getElementById('policy-api-keys').value = values.apiKeys
+      document.getElementById('policy-basic-auth-username').value = values.basicAuthUsername
+      document.getElementById('policy-basic-auth-password').value = values.basicAuthPassword
+      document.getElementById('policy-rate-limit-requests').value = values.rateLimitRequests
+      document.getElementById('policy-rate-limit-window-seconds').value = values.rateLimitWindowSeconds
+      document.getElementById('policy-allowed-methods').value = values.allowedMethods
+      document.getElementById('policy-rewrite-path-prefix').value = values.rewritePathPrefix
+      document.getElementById('policy-add-request-headers').value = values.addRequestHeaders
+      document.getElementById('policy-remove-request-headers').value = values.removeRequestHeaders
+      document.getElementById('policy-max-payload-bytes').value = values.maxPayloadBytes
+      document.getElementById('policy-request-transform-find').value = values.requestTransformFind
+      document.getElementById('policy-request-transform-replace').value = values.requestTransformReplace
+      document.getElementById('policy-cache-ttl-seconds').value = values.cacheTTLSeconds
+      document.getElementById('policy-add-response-headers').value = values.addResponseHeaders
+      document.getElementById('policy-remove-response-headers').value = values.removeResponseHeaders
+      document.getElementById('policy-response-transform-find').value = values.responseTransformFind
+      document.getElementById('policy-response-transform-replace').value = values.responseTransformReplace
+      document.getElementById('policy-max-response-bytes').value = values.maxResponseBytes
+      document.getElementById('policy-cors-allow-origins').value = values.corsAllowOrigins
+      document.getElementById('policy-cors-allow-methods').value = values.corsAllowMethods
+      document.getElementById('policy-cors-allow-headers').value = values.corsAllowHeaders
+      document.getElementById('policy-ip-allow-list').value = values.ipAllowList
+      document.getElementById('policy-ip-block-list').value = values.ipBlockList
+      document.getElementById('policy-circuit-breaker-failures').value = values.circuitBreakerFailures
+      document.getElementById('policy-circuit-breaker-reset-seconds').value = values.circuitBreakerResetSeconds
+
+      if (featureValueIsEnabled('policy-request-timeout-seconds')) addPolicyFeature('timeout')
+      if (featureValueIsEnabled('policy-retry-count')) addPolicyFeature('retry')
+      if (document.getElementById('policy-require-api-key').value === 'true' || document.getElementById('policy-api-keys').value.trim() !== '') addPolicyFeature('api-key')
+      if (document.getElementById('policy-basic-auth-username').value.trim() !== '' || document.getElementById('policy-basic-auth-password').value.trim() !== '') addPolicyFeature('basic-auth')
+      if (featureValueIsEnabled('policy-rate-limit-requests') || featureValueIsEnabled('policy-rate-limit-window-seconds')) addPolicyFeature('rate-limit')
+      if (document.getElementById('policy-allowed-methods').value.trim() !== '') addPolicyFeature('methods')
+      if (document.getElementById('policy-rewrite-path-prefix').value.trim() !== '') addPolicyFeature('rewrite')
+      if (document.getElementById('policy-add-request-headers').value.trim() !== '' || document.getElementById('policy-remove-request-headers').value.trim() !== '') addPolicyFeature('request-headers')
+      if (featureValueIsEnabled('policy-max-payload-bytes')) addPolicyFeature('payload-limit')
+      if (document.getElementById('policy-request-transform-find').value.trim() !== '' || document.getElementById('policy-request-transform-replace').value.trim() !== '') addPolicyFeature('request-transform')
+      if (featureValueIsEnabled('policy-cache-ttl-seconds')) addPolicyFeature('cache')
+      if (document.getElementById('policy-add-response-headers').value.trim() !== '' || document.getElementById('policy-remove-response-headers').value.trim() !== '') addPolicyFeature('response-headers')
+      if (document.getElementById('policy-response-transform-find').value.trim() !== '' || document.getElementById('policy-response-transform-replace').value.trim() !== '') addPolicyFeature('response-transform')
+      if (featureValueIsEnabled('policy-max-response-bytes')) addPolicyFeature('response-limit')
+      if (document.getElementById('policy-cors-allow-origins').value.trim() !== '' || document.getElementById('policy-cors-allow-methods').value.trim() !== '' || document.getElementById('policy-cors-allow-headers').value.trim() !== '') addPolicyFeature('cors')
+      if (document.getElementById('policy-ip-allow-list').value.trim() !== '') addPolicyFeature('ip-allow')
+      if (document.getElementById('policy-ip-block-list').value.trim() !== '') addPolicyFeature('ip-block')
+      if (featureValueIsEnabled('policy-circuit-breaker-failures') || featureValueIsEnabled('policy-circuit-breaker-reset-seconds')) addPolicyFeature('circuit-breaker')
+    }
+
+    function featureValueIsEnabled(id) {
+      var value = document.getElementById(id).value.trim()
+      if (value === '') return false
+      var number = Number(value)
+      if (Number.isNaN(number)) return true
+      return number > 0
+    }
+
+    document.getElementById('policy-form').addEventListener('submit', function (event) {
+      var nameInput = document.getElementById('policy-name')
+      var nextName = nameInput.value.trim().toLowerCase()
+      var currentIndex = document.getElementById('policy-index').value
+      var duplicate = existingPolicyNames.some(function (name, index) {
+        if (currentIndex !== '' && String(index) === currentIndex) return false
+        return name.trim().toLowerCase() === nextName
+      })
+      if (!duplicate) return
+      event.preventDefault()
+      window.alert('policy name already exists')
+    })
+
+    function normalizeRoutePathPrefix(value) {
+      var trimmed = (value || '').trim()
+      if (trimmed === '') return ''
+      if (trimmed.charAt(0) !== '/') trimmed = '/' + trimmed
+      while (trimmed.length > 1 && trimmed.charAt(trimmed.length - 1) === '/') {
+        trimmed = trimmed.slice(0, -1)
+      }
+      return trimmed
+    }
+
+    document.getElementById('route-form').addEventListener('submit', function (event) {
+      var name = document.getElementById('route-name').value.trim()
+      var prefix = normalizeRoutePathPrefix(document.getElementById('route-path-prefix').value)
+      var target = document.getElementById('route-target').value.trim()
+      var currentIndex = document.getElementById('route-index').value
+
+      clearRouteError()
+
+      if (name === '') { event.preventDefault(); showRouteError('name is required'); return }
+      if (prefix === '') { event.preventDefault(); showRouteError('path prefix is required'); return }
+      if (target === '') { event.preventDefault(); showRouteError('target is required'); return }
+
+      if (!/^https?:\/\/[^\s/]+/.test(target)) {
+        event.preventDefault()
+        showRouteError('target must start with http:// or https:// and include a host')
+        return
+      }
+
+      var duplicate = existingRoutePathPrefixes.some(function (existing, index) {
+        if (currentIndex !== '' && String(index) === currentIndex) return false
+        return existing === prefix
+      })
+      if (duplicate) {
+        event.preventDefault()
+        showRouteError('path prefix "' + prefix + '" is already in use')
+      }
+    })
+  </script>
+</body>
+</html>`
+
+const loginTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>waiteway - login</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #fff; color: #000; }
+    .login-container { height: 100vh; display: flex; align-items: center; justify-content: center; background: #fff; }
+    .login-box { width: 300px; padding: 32px; border: 1px solid #000; display: flex; flex-direction: column; gap: 16px; }
+    .login-box h1 { font-size: 1.5rem; font-weight: 500; text-align: center; margin-bottom: 8px; }
+    .login-box input { width: 100%; border: 1px solid #000; padding: 8px 10px; font-size: 0.875rem; font-family: inherit; outline: none; }
+    .login-box button { width: 100%; }
+    .error { color: #000; font-size: 0.8rem; text-align: center; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <div class="login-box">
+      <h1>waiteway</h1>
+      <form method="post" action="/login">
+        <input type="text" name="username" placeholder="username" autocomplete="username" required>
+        <input type="password" name="password" placeholder="password" autocomplete="current-password" required>
+        <button type="submit">login</button>
+      </form>
+      <div class="{{ if .Error }}error{{ else }}error hidden{{ end }}">{{ .Error }}</div>
+    </div>
+  </div>
+</body>
+</html>`

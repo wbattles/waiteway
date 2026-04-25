@@ -5,8 +5,75 @@ import (
 	"testing"
 )
 
+func TestMatchRoutePrefersLongestPrefixWithinBucket(t *testing.T) {
+	g := &Gateway{}
+	routes := []compiledRoute{
+		{Route: Route{Name: "short", PathPrefix: "/api", Target: "https://example.com"}},
+		{Route: Route{Name: "long", PathPrefix: "/api/admin", Target: "https://example.com"}},
+	}
+	g.state.Store(&compiledGatewayState{routeMatcher: buildRouteMatcher(routes)})
+
+	route, ok := g.matchRoute("/api/admin/users")
+	if !ok {
+		t.Fatal("expected route match")
+	}
+	if route.Name != "long" {
+		t.Fatalf("expected longest matching route, got %q", route.Name)
+	}
+}
+
+func TestMatchRouteRespectsSegmentBoundariesWithinBucket(t *testing.T) {
+	g := &Gateway{}
+	routes := []compiledRoute{{Route: Route{Name: "api", PathPrefix: "/api", Target: "https://example.com"}}}
+	g.state.Store(&compiledGatewayState{routeMatcher: buildRouteMatcher(routes)})
+
+	if _, ok := g.matchRoute("/apiv2"); ok {
+		t.Fatal("did not expect /api route to match /apiv2")
+	}
+
+	route, ok := g.matchRoute("/api/v2")
+	if !ok {
+		t.Fatal("expected /api route to match /api/v2")
+	}
+	if route.Name != "api" {
+		t.Fatalf("expected api route, got %q", route.Name)
+	}
+}
+
+func TestMatchRouteFallsBackToRootBucket(t *testing.T) {
+	g := &Gateway{}
+	routes := []compiledRoute{{Route: Route{Name: "root", PathPrefix: "/", Target: "https://example.com"}}}
+	g.state.Store(&compiledGatewayState{routeMatcher: buildRouteMatcher(routes)})
+
+	route, ok := g.matchRoute("/anything/here")
+	if !ok {
+		t.Fatal("expected root route match")
+	}
+	if route.Name != "root" {
+		t.Fatalf("expected root route, got %q", route.Name)
+	}
+}
+
+func TestBuildRouteMatcherBucketsByFirstSegment(t *testing.T) {
+	matcher := buildRouteMatcher([]compiledRoute{
+		{Route: Route{Name: "api", PathPrefix: "/api", Target: "https://example.com"}},
+		{Route: Route{Name: "admin", PathPrefix: "/admin/users", Target: "https://example.com"}},
+		{Route: Route{Name: "root", PathPrefix: "/", Target: "https://example.com"}},
+	})
+
+	if len(matcher.buckets["api"]) != 1 {
+		t.Fatalf("expected 1 api bucket route, got %d", len(matcher.buckets["api"]))
+	}
+	if len(matcher.buckets["admin"]) != 1 {
+		t.Fatalf("expected 1 admin bucket route, got %d", len(matcher.buckets["admin"]))
+	}
+	if len(matcher.root) != 1 {
+		t.Fatalf("expected 1 root route, got %d", len(matcher.root))
+	}
+}
+
 func TestCompileConfigRejectsDuplicateRoutePathPrefixes(t *testing.T) {
-	_, _, err := compileConfig(Config{
+	_, err := compileConfig(Config{
 		Routes: []Route{
 			{Name: "first", PathPrefix: "/example", Target: "https://example.com"},
 			{Name: "second", PathPrefix: "/example", Target: "https://other-example.com"},
@@ -122,7 +189,7 @@ func TestStoreUniqueIndexRejectsDuplicatePathPrefix(t *testing.T) {
 }
 
 func TestCompileConfigNormalizesBeforeDuplicateCheck(t *testing.T) {
-	_, _, err := compileConfig(Config{
+	_, err := compileConfig(Config{
 		Routes: []Route{
 			{Name: "first", PathPrefix: "/example", Target: "https://example.com"},
 			{Name: "second", PathPrefix: "/example/", Target: "https://other-example.com"},
@@ -150,10 +217,10 @@ func TestValidateRouteTarget(t *testing.T) {
 	}
 
 	invalid := []string{
-		"",                // empty
-		"example.com",     // no scheme
-		"://example.com",  // missing scheme
-		"https://",        // no host
+		"",               // empty
+		"example.com",    // no scheme
+		"://example.com", // missing scheme
+		"https://",       // no host
 		"not a url at all",
 		"::::",
 	}
