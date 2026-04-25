@@ -285,12 +285,12 @@ func shouldCacheRouteResponse(route compiledRoute, r *http.Request) bool {
 	return route.policy != nil && route.policy.cache != nil && r.Method == http.MethodGet
 }
 
-func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request) (bool, int, string) {
+func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey string, clientIP netip.Addr, hasClientIP bool, now time.Time) (bool, int, string) {
 	if route.policy == nil {
 		return true, http.StatusOK, ""
 	}
 
-	if route.policy.circuitBreaker != nil && !route.policy.circuitBreaker.Allow(time.Now()) {
+	if route.policy.circuitBreaker != nil && !route.policy.circuitBreaker.Allow(now) {
 		return false, http.StatusServiceUnavailable, "circuit open"
 	}
 
@@ -300,36 +300,28 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request) (bool, i
 		}
 	}
 
-	ip, err := remoteIP(r.RemoteAddr)
-	if err != nil {
-		return false, http.StatusForbidden, "forbidden"
+	needsClientIP := len(route.policy.ipAllowList) > 0 || len(route.policy.ipBlockList) > 0 || route.policy.rateLimiter != nil
+	if needsClientIP {
+		if !hasClientIP {
+			return false, http.StatusForbidden, "forbidden"
+		}
+
+		if route.policy.blocksIP(clientIP) {
+			return false, http.StatusForbidden, "forbidden"
+		}
+		if !route.policy.allowsIP(clientIP) {
+			return false, http.StatusForbidden, "forbidden"
+		}
 	}
 
-	if route.policy.blocksIP(ip) {
-		return false, http.StatusForbidden, "forbidden"
-	}
-	if !route.policy.allowsIP(ip) {
-		return false, http.StatusForbidden, "forbidden"
-	}
-
-	if route.policy.MaxPayloadBytes > 0 {
-		if r.ContentLength > route.policy.MaxPayloadBytes {
+	if err := processRequestBody(route.policy, r); err != nil {
+		if err == errPayloadTooLarge {
 			return false, http.StatusRequestEntityTooLarge, "payload too large"
 		}
-		if shouldReadBody(r.Method) {
-			body, err := io.ReadAll(io.LimitReader(r.Body, route.policy.MaxPayloadBytes+1))
-			if err != nil {
-				return false, http.StatusBadRequest, "bad request"
-			}
-			if int64(len(body)) > route.policy.MaxPayloadBytes {
-				return false, http.StatusRequestEntityTooLarge, "payload too large"
-			}
-			r.Body = io.NopCloser(bytes.NewReader(body))
-			r.ContentLength = int64(len(body))
-		}
+		return false, http.StatusBadRequest, "bad request"
 	}
 
-	if route.policy.RequireAPIKey && !g.authorizePolicyAPIKey(route.policy, r) {
+	if route.policy.RequireAPIKey && !g.authorizePolicyAPIKey(route.policy, apiKey) {
 		return false, http.StatusUnauthorized, "unauthorized"
 	}
 
@@ -340,20 +332,16 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request) (bool, i
 		}
 	}
 
-	if route.policy.rateLimiter != nil && !route.policy.rateLimiter.Allow(ip.String(), time.Now()) {
+	if route.policy.rateLimiter != nil && !route.policy.rateLimiter.Allow(clientIP.String(), now) {
 		return false, http.StatusTooManyRequests, "rate limit exceeded"
 	}
 
 	applyRequestHeaders(route.policy, r)
-	if err := applyRequestTransform(route.policy, r); err != nil {
-		return false, http.StatusBadRequest, "bad request"
-	}
 
 	return true, http.StatusOK, ""
 }
 
-func (g *Gateway) authorizePolicyAPIKey(policy *compiledPolicy, r *http.Request) bool {
-	key := requestAPIKey(r)
+func (g *Gateway) authorizePolicyAPIKey(policy *compiledPolicy, key string) bool {
 	if len(policy.apiKeys) == 0 {
 		return key != ""
 	}
@@ -361,11 +349,11 @@ func (g *Gateway) authorizePolicyAPIKey(policy *compiledPolicy, r *http.Request)
 	return ok
 }
 
-func (g *Gateway) cachedPolicyResponse(route compiledRoute, r *http.Request) (cachedResponse, bool) {
-	if !shouldCacheRouteResponse(route, r) {
+func (g *Gateway) cachedPolicyResponse(route compiledRoute, key string, now time.Time) (cachedResponse, bool) {
+	if route.policy == nil || route.policy.cache == nil || key == "" || now.IsZero() {
 		return cachedResponse{}, false
 	}
-	return route.policy.cache.Get(cacheKey(r), time.Now())
+	return route.policy.cache.Get(key, now)
 }
 
 func applyRequestHeaders(policy *compiledPolicy, r *http.Request) {
@@ -377,25 +365,51 @@ func applyRequestHeaders(policy *compiledPolicy, r *http.Request) {
 	}
 }
 
-func applyRequestTransform(policy *compiledPolicy, r *http.Request) error {
-	if policy.RequestTransformFind == "" || shouldReadBody(r.Method) == false {
+var errPayloadTooLarge = fmt.Errorf("payload too large")
+
+func processRequestBody(policy *compiledPolicy, r *http.Request) error {
+	if policy == nil || !shouldReadBody(r.Method) {
 		return nil
 	}
-	body, err := io.ReadAll(r.Body)
+	if policy.MaxPayloadBytes > 0 && r.ContentLength > policy.MaxPayloadBytes {
+		return errPayloadTooLarge
+	}
+	if policy.MaxPayloadBytes <= 0 && policy.RequestTransformFind == "" {
+		return nil
+	}
+
+	limit := int64(10 << 20)
+	if policy.MaxPayloadBytes > 0 {
+		limit = policy.MaxPayloadBytes + 1
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit))
 	if err != nil {
 		return err
 	}
-	transformed := strings.ReplaceAll(string(body), policy.RequestTransformFind, policy.RequestTransformReplace)
-	r.Body = io.NopCloser(strings.NewReader(transformed))
-	r.ContentLength = int64(len(transformed))
+	if policy.MaxPayloadBytes > 0 && int64(len(body)) > policy.MaxPayloadBytes {
+		return errPayloadTooLarge
+	}
+	if policy.RequestTransformFind != "" {
+		body = bytes.ReplaceAll(body, []byte(policy.RequestTransformFind), []byte(policy.RequestTransformReplace))
+	}
+	setRequestBody(r, body)
 	return nil
 }
 
-func (g *Gateway) storeCachedPolicyResponse(route compiledRoute, r *http.Request, recorder *cacheRecorder) {
-	if !shouldCacheRouteResponse(route, r) || recorder.status != http.StatusOK {
+func setRequestBody(r *http.Request, body []byte) {
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	r.ContentLength = int64(len(body))
+}
+
+func (g *Gateway) storeCachedPolicyResponse(route compiledRoute, key string, now time.Time, recorder *cacheRecorder) {
+	if route.policy == nil || route.policy.cache == nil || key == "" || now.IsZero() || recorder.status != http.StatusOK {
 		return
 	}
-	route.policy.cache.Set(cacheKey(r), recorder.status, recorder.header, recorder.body.Bytes(), time.Now())
+	route.policy.cache.Set(key, recorder.status, recorder.header, recorder.body.Bytes(), now)
 }
 
 // rateLimiterSweepEvery controls how often Allow sweeps expired keys out of
@@ -470,7 +484,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var getBody func() (io.ReadCloser, error)
 	if req.GetBody != nil {
 		getBody = func() (io.ReadCloser, error) { return req.GetBody() }
-	} else if req.Body != nil {
+	} else if req.Body != nil && req.ContentLength != 0 {
 		bodyBytes, readErr := io.ReadAll(req.Body)
 		if readErr != nil {
 			return nil, readErr
@@ -483,7 +497,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	for attempt := 0; attempt <= t.retries; attempt++ {
 		clone := req.Clone(req.Context())
-		if b, gerr := getBody(); gerr != nil {
+		if attempt == 0 && req.GetBody == nil {
+			clone.Body = req.Body
+		} else if b, gerr := getBody(); gerr != nil {
 			return nil, gerr
 		} else if b != nil {
 			clone.Body = b

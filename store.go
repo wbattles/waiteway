@@ -239,6 +239,11 @@ func (s *Store) ListRoutes() ([]Route, error) {
 	}
 	defer rows.Close()
 
+	keysByRouteID, err := s.listAllRouteAPIKeys()
+	if err != nil {
+		return nil, err
+	}
+
 	var routes []Route
 	for rows.Next() {
 		var r Route
@@ -249,12 +254,7 @@ func (s *Store) ListRoutes() ([]Route, error) {
 		}
 		r.RequireAPIKey = reqKey == 1
 		r.StripPrefix = strip == 1
-
-		keys, err := s.listRouteAPIKeys(id)
-		if err != nil {
-			return nil, err
-		}
-		r.APIKeys = keys
+		r.APIKeys = keysByRouteID[id]
 		routes = append(routes, r)
 	}
 	return routes, nil
@@ -309,18 +309,9 @@ func (s *Store) AddRoute(r Route) error {
 	var maxPos int
 	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM routes").Scan(&maxPos)
 
-	reqKey := 0
-	if r.RequireAPIKey {
-		reqKey = 1
-	}
-	strip := 0
-	if r.StripPrefix {
-		strip = 1
-	}
-
 	res, err := tx.Exec(
 		"INSERT INTO routes (name, path_prefix, target, policy_name, require_api_key, strip_prefix, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		r.Name, r.PathPrefix, r.Target, r.PolicyName, reqKey, strip, maxPos+1,
+		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.RequireAPIKey), boolToInt(r.StripPrefix), maxPos+1,
 	)
 	if err != nil {
 		return err
@@ -361,18 +352,9 @@ func (s *Store) UpdateRoute(index int, r Route) error {
 		return duplicateRoutePathPrefixError(r.PathPrefix)
 	}
 
-	reqKey := 0
-	if r.RequireAPIKey {
-		reqKey = 1
-	}
-	strip := 0
-	if r.StripPrefix {
-		strip = 1
-	}
-
 	if _, err := tx.Exec(
 		"UPDATE routes SET name = ?, path_prefix = ?, target = ?, policy_name = ?, require_api_key = ?, strip_prefix = ? WHERE id = ?",
-		r.Name, r.PathPrefix, r.Target, r.PolicyName, reqKey, strip, id,
+		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.RequireAPIKey), boolToInt(r.StripPrefix), id,
 	); err != nil {
 		return err
 	}
@@ -408,22 +390,23 @@ func (s *Store) DeleteRoute(index int) error {
 	return err
 }
 
-func (s *Store) listRouteAPIKeys(routeID int) ([]string, error) {
-	rows, err := s.db.Query("SELECT key FROM route_api_keys WHERE route_id = ?", routeID)
+func (s *Store) listAllRouteAPIKeys() (map[int][]string, error) {
+	rows, err := s.db.Query("SELECT route_id, key FROM route_api_keys ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var keys []string
+	keysByRouteID := map[int][]string{}
 	for rows.Next() {
+		var routeID int
 		var key string
-		if err := rows.Scan(&key); err != nil {
+		if err := rows.Scan(&routeID, &key); err != nil {
 			return nil, err
 		}
-		keys = append(keys, key)
+		keysByRouteID[routeID] = append(keysByRouteID[routeID], key)
 	}
-	return keys, nil
+	return keysByRouteID, nil
 }
 
 // --- request logs ---
@@ -483,9 +466,9 @@ func (s *Store) AddSession(id string) error {
 }
 
 func (s *Store) HasSession(id string) bool {
-	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM sessions WHERE id = ?", id).Scan(&count)
-	return count > 0
+	var exists int
+	err := s.db.QueryRow("SELECT 1 FROM sessions WHERE id = ? LIMIT 1", id).Scan(&exists)
+	return err == nil
 }
 
 func (s *Store) DeleteSession(id string) error {
@@ -638,18 +621,13 @@ func (s *Store) AddPolicy(policy Policy) error {
 	var maxPos int
 	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM policies").Scan(&maxPos)
 
-	requireAPIKey := 0
-	if policy.RequireAPIKey {
-		requireAPIKey = 1
-	}
-
 	_, err = tx.Exec(
 		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, api_keys, basic_auth_username, basic_auth_password, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		policy.Name,
 		policy.RequestTimeoutSeconds,
 		policy.RetryCount,
-		requireAPIKey,
+		boolToInt(policy.RequireAPIKey),
 		joinLines(policy.APIKeys),
 		policy.BasicAuthUsername,
 		policy.BasicAuthPassword,
@@ -711,17 +689,12 @@ func (s *Store) UpdatePolicy(index int, policy Policy) error {
 		return err
 	}
 
-	requireAPIKey := 0
-	if policy.RequireAPIKey {
-		requireAPIKey = 1
-	}
-
 	_, err = tx.Exec(
 		`UPDATE policies SET name = ?, request_timeout_seconds = ?, retry_count = ?, require_api_key = ?, api_keys = ?, basic_auth_username = ?, basic_auth_password = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, allowed_methods = ?, rewrite_path_prefix = ?, add_request_headers = ?, remove_request_headers = ?, max_payload_bytes = ?, request_transform_find = ?, request_transform_replace = ?, cache_ttl_seconds = ?, add_response_headers = ?, remove_response_headers = ?, response_transform_find = ?, response_transform_replace = ?, max_response_bytes = ?, cors_allow_origins = ?, cors_allow_methods = ?, cors_allow_headers = ?, ip_allow_list = ?, ip_block_list = ?, circuit_breaker_failures = ?, circuit_breaker_reset_seconds = ? WHERE id = ?`,
 		policy.Name,
 		policy.RequestTimeoutSeconds,
 		policy.RetryCount,
-		requireAPIKey,
+		boolToInt(policy.RequireAPIKey),
 		joinLines(policy.APIKeys),
 		policy.BasicAuthUsername,
 		policy.BasicAuthPassword,
@@ -785,4 +758,11 @@ func (s *Store) DeletePolicy(index int) error {
 
 func joinLines(items []string) string {
 	return strings.Join(items, "\n")
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }

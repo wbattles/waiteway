@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"os"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +59,7 @@ func TestGatewayDrainsPendingLogsOnClose(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	for i := 0; i < 10; i++ {
-		gw.recordRequest(req, "test", 200, time.Millisecond)
+		gw.recordRequest(req, req.RemoteAddr, "test", 200, time.Millisecond, time.Now())
 	}
 
 	// Close blocks until the drainer has flushed pending entries
@@ -117,16 +117,16 @@ func TestGatewayRecordRequestIsNonBlocking(t *testing.T) {
 	go func() {
 		// Send enough to overflow the 1024 buffer plus extras.
 		for i := 0; i < 2000; i++ {
-			gw.recordRequest(req, "test", 200, 0)
+			gw.recordRequest(req, req.RemoteAddr, "test", 200, 0, time.Now())
 		}
 		close(done)
 	}()
 
 	select {
 	case <-done:
-		case <-time.After(2 * time.Second):
-			t.Fatal("recordRequest blocked when channel was full")
-		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("recordRequest blocked when channel was full")
+	}
 }
 
 func TestAdminMetricsEndpointReportsCounters(t *testing.T) {
@@ -145,8 +145,8 @@ func TestAdminMetricsEndpointReportsCounters(t *testing.T) {
 	t.Cleanup(gw.Close)
 
 	req := httptest.NewRequest("GET", "/test", nil)
-	gw.recordRequest(req, "test", 200, time.Millisecond)
-	gw.recordRequest(req, "test", 502, 2*time.Millisecond)
+	gw.recordRequest(req, req.RemoteAddr, "test", 200, time.Millisecond, time.Now())
+	gw.recordRequest(req, req.RemoteAddr, "test", 502, 2*time.Millisecond, time.Now())
 
 	res := httptest.NewRecorder()
 	gw.adminHandler().ServeHTTP(res, httptest.NewRequest("GET", "/metrics", nil))
