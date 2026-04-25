@@ -363,7 +363,7 @@
               ${canEdit ? `
                 <div class="user-actions">
                   <button onclick="editTeamUsers(${p.id})">users</button>
-                  <button onclick="deleteMyTeam(${p.id}, '${esc(p.name)}')">delete</button>
+                  <button data-team-name="${esc(p.name)}" onclick="deleteMyTeam(${p.id}, this.dataset.teamName)">delete</button>
                 </div>
               ` : ''}
             </div>
@@ -408,12 +408,7 @@
       container.innerHTML = allUsers.map(u => {
         const checked = selectedIds.includes(u.id);
         const locked = !!u.is_admin;
-        return `
-          <label class="user-checkbox">
-            <input type="checkbox" value="${u.id}" ${checked ? 'checked' : ''} ${locked ? 'disabled' : ''}>
-            ${u.username}${locked ? ' (admin)' : ''}
-          </label>
-        `;
+        return `<label class="user-checkbox"><input type="checkbox" value="${u.id}" ${checked ? 'checked' : ''} ${locked ? 'disabled' : ''}><span>${esc(u.username)}${locked ? ' (admin)' : ''}</span></label>`;
       }).join('');
       document.getElementById('team-modal').classList.remove('hidden');
     }

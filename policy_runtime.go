@@ -97,9 +97,9 @@ func (g *Gateway) authorizePolicyUserAuth(route compiledRoute, policy *compiledP
 	return g.userMatchesTeamIDs(user, policy.UserAuthTeamIDs)
 }
 
-func (g *Gateway) authorizeRouteAPIKey(route compiledRoute, key string, _ User, _ bool) bool {
+func (g *Gateway) authorizeRouteAPIKey(route compiledRoute, key string, _ User, hasRequestUser bool) bool {
 	if len(route.apiKeys) == 0 {
-		return key != ""
+		return hasRequestUser
 	}
 	_, ok := route.apiKeys[key]
 	return ok

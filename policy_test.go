@@ -661,3 +661,229 @@ func TestPolicyMultipleFeatures(t *testing.T) {
 		t.Fatalf("expected X-Injected 'yes', got %q", receivedHeader)
 	}
 }
+
+func TestPolicyAPIKeyAuthTeamScoped(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	admin, err := store.CreateUser("admin", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err := store.CreateUser("allowed", "pass", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied, err := store.CreateUser("denied", "pass", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	team, err := store.CreateTeam("testers", "TST", admin.ID, []int{allowed.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.CreateAPIKey(admin.ID, "admin-key"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateAPIKey(allowed.ID, "allowed-key"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateAPIKey(denied.ID, "denied-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := Policy{
+		Name:          "team-api",
+		RequireAPIKey: true,
+		APIKeyTeamIDs: []int{team.ID},
+	}
+	config := Config{
+		Admin:    AdminConfig{Username: "admin", Password: "admin"},
+		LogLimit: 10,
+		Policies: []Policy{policy},
+		Routes:   []Route{{Name: "test", PathPrefix: "/test", Target: upstream.URL, PolicyName: "team-api"}},
+	}
+
+	gw, err := newGateway(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(gw.Close)
+	server := httptest.NewServer(gw.gatewayHandler())
+	defer server.Close()
+
+	// admin bypasses team restriction
+	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
+	req.Header.Set("X-API-Key", "admin-key")
+	resp, _ := http.DefaultClient.Do(req)
+	if resp.StatusCode != 200 {
+		t.Fatalf("admin should bypass team restriction, got %d", resp.StatusCode)
+	}
+
+	// allowed user (in team) passes
+	req, _ = http.NewRequest("GET", server.URL+"/test", nil)
+	req.Header.Set("X-API-Key", "allowed-key")
+	resp, _ = http.DefaultClient.Do(req)
+	if resp.StatusCode != 200 {
+		t.Fatalf("user in team should be allowed, got %d", resp.StatusCode)
+	}
+
+	// denied user (not in team) rejected
+	req, _ = http.NewRequest("GET", server.URL+"/test", nil)
+	req.Header.Set("X-API-Key", "denied-key")
+	resp, _ = http.DefaultClient.Do(req)
+	if resp.StatusCode != 401 {
+		t.Fatalf("user not in team should be denied, got %d", resp.StatusCode)
+	}
+
+	// no key rejected
+	resp, _ = http.Get(server.URL + "/test")
+	if resp.StatusCode != 401 {
+		t.Fatalf("no key should be denied, got %d", resp.StatusCode)
+	}
+}
+
+func TestPolicyUsernameAuthTeamScoped(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	admin, err := store.CreateUser("admin", "adminpass", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err := store.CreateUser("allowed", "allowpass", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied, err := store.CreateUser("denied", "denypass", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = denied
+
+	team, err := store.CreateTeam("testers", "TST", admin.ID, []int{allowed.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	policy := Policy{
+		Name:            "team-user",
+		RequireUserAuth: true,
+		UserAuthTeamIDs: []int{team.ID},
+	}
+	config := Config{
+		Admin:    AdminConfig{Username: "admin", Password: "adminpass"},
+		LogLimit: 10,
+		Policies: []Policy{policy},
+		Routes:   []Route{{Name: "test", PathPrefix: "/test", Target: upstream.URL, PolicyName: "team-user"}},
+	}
+
+	gw, err := newGateway(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(gw.Close)
+	server := httptest.NewServer(gw.gatewayHandler())
+	defer server.Close()
+
+	// admin bypasses team restriction
+	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("admin:adminpass")))
+	resp, _ := http.DefaultClient.Do(req)
+	if resp.StatusCode != 200 {
+		t.Fatalf("admin should bypass team restriction, got %d", resp.StatusCode)
+	}
+
+	// allowed user passes
+	req, _ = http.NewRequest("GET", server.URL+"/test", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("allowed:allowpass")))
+	resp, _ = http.DefaultClient.Do(req)
+	if resp.StatusCode != 200 {
+		t.Fatalf("user in team should be allowed, got %d", resp.StatusCode)
+	}
+
+	// denied user rejected
+	req, _ = http.NewRequest("GET", server.URL+"/test", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("denied:denypass")))
+	resp, _ = http.DefaultClient.Do(req)
+	if resp.StatusCode != 401 {
+		t.Fatalf("user not in team should be denied, got %d", resp.StatusCode)
+	}
+
+	// no auth rejected
+	resp, _ = http.Get(server.URL + "/test")
+	if resp.StatusCode != 401 {
+		t.Fatalf("no auth should be denied, got %d", resp.StatusCode)
+	}
+}
+
+func TestPolicyAPIKeyAuthAllTeams(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	if _, err := store.CreateUser("admin", "admin", true); err != nil {
+		t.Fatal(err)
+	}
+	user, err := store.CreateUser("user", "pass", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateAPIKey(user.ID, "user-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	// empty APIKeyTeamIDs = all teams allowed
+	policy := Policy{
+		Name:          "all-teams",
+		RequireAPIKey: true,
+		APIKeyTeamIDs: nil,
+	}
+	config := Config{
+		Admin:    AdminConfig{Username: "admin", Password: "admin"},
+		LogLimit: 10,
+		Policies: []Policy{policy},
+		Routes:   []Route{{Name: "test", PathPrefix: "/test", Target: upstream.URL, PolicyName: "all-teams"}},
+	}
+
+	gw, err := newGateway(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(gw.Close)
+	server := httptest.NewServer(gw.gatewayHandler())
+	defer server.Close()
+
+	// any valid user key should pass when no team restriction
+	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
+	req.Header.Set("X-API-Key", "user-key")
+	resp, _ := http.DefaultClient.Do(req)
+	if resp.StatusCode != 200 {
+		t.Fatalf("any user should be allowed with empty team list, got %d", resp.StatusCode)
+	}
+}

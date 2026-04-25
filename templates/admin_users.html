@@ -198,8 +198,8 @@
                 <div class="user-activity">${createdText}</div>
               </div>
               <div class="user-actions">
-                ${canChangePassword ? `<button onclick="changePassword(${user.id}, '${esc(user.username)}')">change password</button>` : ''}
-                ${canDelete ? `<button onclick="deleteUser(${user.id}, '${esc(user.username)}')">delete</button>` : ''}
+                ${canChangePassword ? `<button data-username="${esc(user.username)}" onclick="changePassword(${user.id}, this.dataset.username)">change password</button>` : ''}
+                ${canDelete ? `<button data-username="${esc(user.username)}" onclick="deleteUser(${user.id}, this.dataset.username)">delete</button>` : ''}
               </div>
             </div>
           `;
@@ -338,7 +338,7 @@
             </div>
             <div class="user-actions">
               <button onclick="editTeamUsers(${team.id})">users</button>
-              <button onclick="deleteTeam(${team.id}, '${esc(team.name)}')">delete</button>
+              <button data-team-name="${esc(team.name)}" onclick="deleteTeam(${team.id}, this.dataset.teamName)">delete</button>
             </div>
           </div>
         `).join('');
