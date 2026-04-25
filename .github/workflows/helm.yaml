@@ -8,7 +8,7 @@ on:
       - charts/waiteway/templates/**
       - charts/waiteway/values.yaml
       - charts/waiteway/Chart.yaml
-      - .github/workflows/helm.yaml
+      # - .github/workflows/helm.yaml
 
 jobs:
   release:
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
