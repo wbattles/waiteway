@@ -115,7 +115,6 @@ func policyFromForm(r *http.Request) (Policy, error) {
 		RequestTimeoutSeconds:      requestTimeoutSeconds,
 		RetryCount:                 retryCount,
 		RequireAPIKey:              r.FormValue("policy_require_api_key") == "true",
-		APIKeys:                    nil,
 		RequireUserAuth:            r.FormValue("policy_require_user_auth") == "true",
 		RateLimitRequests:          rateLimitRequests,
 		RateLimitWindowSeconds:     rateLimitWindowSeconds,

@@ -16,7 +16,6 @@ type Policy struct {
 	RequestTimeoutSeconds      int
 	RetryCount                 int
 	RequireAPIKey              bool
-	APIKeys                    []string
 	RequireUserAuth            bool
 	RateLimitRequests          int
 	RateLimitWindowSeconds     int
@@ -44,7 +43,6 @@ type Policy struct {
 
 type compiledPolicy struct {
 	Policy
-	apiKeys               map[string]struct{}
 	allowedMethods        map[string]struct{}
 	addRequestHeaders     map[string]string
 	removeRequestHeaders  map[string]struct{}
@@ -61,15 +59,9 @@ type compiledPolicy struct {
 func compilePolicy(policy Policy) (*compiledPolicy, error) {
 	policy.RewritePathPrefix = normalizePathPrefix(policy.RewritePathPrefix)
 	compiled := &compiledPolicy{
-		Policy:  policy,
-		apiKeys: make(map[string]struct{}, len(policy.APIKeys)),
+		Policy:         policy,
+		allowedMethods: make(map[string]struct{}, len(policy.AllowedMethods)),
 	}
-	for _, key := range policy.APIKeys {
-		if key != "" {
-			compiled.apiKeys[key] = struct{}{}
-		}
-	}
-	compiled.allowedMethods = make(map[string]struct{}, len(policy.AllowedMethods))
 	for _, method := range policy.AllowedMethods {
 		if method != "" {
 			compiled.allowedMethods[strings.ToUpper(method)] = struct{}{}

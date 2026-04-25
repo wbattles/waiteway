@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS policies (
 	request_timeout_seconds  INTEGER NOT NULL DEFAULT 0,
 	retry_count              INTEGER NOT NULL DEFAULT 0,
 	require_api_key          INTEGER NOT NULL DEFAULT 0,
-	api_keys                 TEXT NOT NULL DEFAULT '',
 	require_user_auth        INTEGER NOT NULL DEFAULT 0,
 	rate_limit_requests      INTEGER NOT NULL DEFAULT 0,
 	rate_limit_window_seconds INTEGER NOT NULL DEFAULT 0,
@@ -533,7 +532,7 @@ func (s *Store) HasSettings() bool {
 
 func (s *Store) ListPolicies() ([]Policy, error) {
 	rows, err := s.db.Query(`
-		SELECT name, request_timeout_seconds, retry_count, require_api_key, api_keys, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds
+		SELECT name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds
 		FROM policies
 		ORDER BY position, id
 	`)
@@ -546,7 +545,6 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 	for rows.Next() {
 		var policy Policy
 		var requireAPIKey int
-		var apiKeys string
 		var requireUserAuth int
 		var allowedMethods string
 		var addRequestHeaders string
@@ -563,7 +561,6 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 			&policy.RequestTimeoutSeconds,
 			&policy.RetryCount,
 			&requireAPIKey,
-			&apiKeys,
 			&requireUserAuth,
 			&policy.RateLimitRequests,
 			&policy.RateLimitWindowSeconds,
@@ -591,7 +588,6 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 			return nil, err
 		}
 		policy.RequireAPIKey = requireAPIKey == 1
-		policy.APIKeys = splitLines(apiKeys)
 		policy.RequireUserAuth = requireUserAuth == 1
 		policy.AllowedMethods = splitLines(allowedMethods)
 		policy.AddRequestHeaders = splitLines(addRequestHeaders)
@@ -659,13 +655,12 @@ func (s *Store) AddPolicy(policy Policy) error {
 	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM policies").Scan(&maxPos)
 
 	_, err = tx.Exec(
-		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, api_keys, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		policy.Name,
 		policy.RequestTimeoutSeconds,
 		policy.RetryCount,
 		boolToInt(policy.RequireAPIKey),
-		joinLines(policy.APIKeys),
 		boolToInt(policy.RequireUserAuth),
 		policy.RateLimitRequests,
 		policy.RateLimitWindowSeconds,
@@ -726,12 +721,11 @@ func (s *Store) UpdatePolicy(index int, policy Policy) error {
 	}
 
 	_, err = tx.Exec(
-		`UPDATE policies SET name = ?, request_timeout_seconds = ?, retry_count = ?, require_api_key = ?, api_keys = ?, require_user_auth = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, allowed_methods = ?, rewrite_path_prefix = ?, add_request_headers = ?, remove_request_headers = ?, max_payload_bytes = ?, request_transform_find = ?, request_transform_replace = ?, cache_ttl_seconds = ?, add_response_headers = ?, remove_response_headers = ?, response_transform_find = ?, response_transform_replace = ?, max_response_bytes = ?, cors_allow_origins = ?, cors_allow_methods = ?, cors_allow_headers = ?, ip_allow_list = ?, ip_block_list = ?, circuit_breaker_failures = ?, circuit_breaker_reset_seconds = ? WHERE id = ?`,
+		`UPDATE policies SET name = ?, request_timeout_seconds = ?, retry_count = ?, require_api_key = ?, require_user_auth = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, allowed_methods = ?, rewrite_path_prefix = ?, add_request_headers = ?, remove_request_headers = ?, max_payload_bytes = ?, request_transform_find = ?, request_transform_replace = ?, cache_ttl_seconds = ?, add_response_headers = ?, remove_response_headers = ?, response_transform_find = ?, response_transform_replace = ?, max_response_bytes = ?, cors_allow_origins = ?, cors_allow_methods = ?, cors_allow_headers = ?, ip_allow_list = ?, ip_block_list = ?, circuit_breaker_failures = ?, circuit_breaker_reset_seconds = ? WHERE id = ?`,
 		policy.Name,
 		policy.RequestTimeoutSeconds,
 		policy.RetryCount,
 		boolToInt(policy.RequireAPIKey),
-		joinLines(policy.APIKeys),
 		boolToInt(policy.RequireUserAuth),
 		policy.RateLimitRequests,
 		policy.RateLimitWindowSeconds,
