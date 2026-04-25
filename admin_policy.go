@@ -72,7 +72,9 @@ func (g *Gateway) handleAdminDeletePolicy(w http.ResponseWriter, r *http.Request
 }
 
 func policyFromForm(r *http.Request) (Policy, error) {
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		return Policy{}, err
+	}
 	requestTimeoutSeconds, err := intFromForm(r, "policy_request_timeout_seconds")
 	if err != nil {
 		return Policy{}, err
