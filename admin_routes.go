@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -12,11 +13,13 @@ import (
 func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
 	route, err := routeFromForm(r)
 	if err != nil {
+		log.Printf("waiteway add route form error: %v", err)
 		silentAdminRedirect(w, r)
 		return
 	}
 
 	if err := g.store.AddRoute(route); err != nil {
+		log.Printf("waiteway add route store error: %v", err)
 		silentAdminRedirect(w, r)
 		return
 	}
@@ -28,17 +31,20 @@ func (g *Gateway) handleAdminUpdateRoute(w http.ResponseWriter, r *http.Request)
 	config := g.currentConfig()
 	index, err := routeIndexFromForm(r, len(config.Routes))
 	if err != nil {
+		log.Printf("waiteway update route index error: %v", err)
 		silentAdminRedirect(w, r)
 		return
 	}
 
 	route, err := routeFromForm(r)
 	if err != nil {
+		log.Printf("waiteway update route form error: %v", err)
 		silentAdminRedirect(w, r)
 		return
 	}
 
 	if err := g.store.UpdateRoute(index, route); err != nil {
+		log.Printf("waiteway update route store error: %v", err)
 		silentAdminRedirect(w, r)
 		return
 	}
@@ -50,11 +56,13 @@ func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request)
 	config := g.currentConfig()
 	index, err := routeIndexFromForm(r, len(config.Routes))
 	if err != nil {
+		config.ActiveTab = "gateway"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	if err := g.store.DeleteRoute(index); err != nil {
+		config.ActiveTab = "gateway"
 		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
@@ -63,6 +71,7 @@ func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request)
 }
 
 func routeFromForm(r *http.Request) (Route, error) {
+	r.ParseForm()
 	route := Route{
 		Name:          strings.TrimSpace(r.FormValue("route_name")),
 		PathPrefix:    normalizePathPrefix(strings.TrimSpace(r.FormValue("route_path_prefix"))),

@@ -16,6 +16,8 @@ import (
 )
 
 type adminPageData struct {
+	CurrentUser           User
+	IsAdmin               bool
 	AdminUsername         string
 	LogLimit              int
 	LoadBalancerMode      string
@@ -26,6 +28,7 @@ type adminPageData struct {
 	AdminListen           string
 	Policies              []Policy
 	Routes                []Route
+	Teams                 []Team
 	ActiveTab             string
 	OpenRoutes            int
 	ProtectedRoutes       int
@@ -64,6 +67,9 @@ func (g *Gateway) adminHandler() http.Handler {
 	mux.HandleFunc("/metrics", g.handleMetrics)
 	mux.HandleFunc("/login", g.handleAdminLogin)
 	mux.HandleFunc("/logout", g.handleAdminLogout)
+	mux.HandleFunc("/admin", g.handleUsersAdminPage)
+	mux.HandleFunc("/settings", g.handleSettingsPage)
+	mux.HandleFunc("/api/", g.handleAPI)
 	mux.HandleFunc("/", g.handleAdmin)
 	return mux
 }
@@ -89,7 +95,8 @@ func (g *Gateway) handleMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
-	if !g.authorizeAdmin(r) {
+	user, ok := g.currentUser(r)
+	if !ok {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -101,10 +108,14 @@ func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
 
 	errText := r.URL.Query().Get("error")
 	activeTab := normalizeAdminTab(r.URL.Query().Get("tab"))
-	g.renderAdminPage(w, g.adminPageData(errText, activeTab), http.StatusOK)
+	g.renderAdminPage(w, g.adminPageData(user, errText, activeTab), http.StatusOK)
 }
 
 func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+	if _, ok := g.currentUser(r); ok && r.Method == http.MethodGet {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	if r.Method == http.MethodGet {
 		g.renderLogin(w, "")
 		return
@@ -120,10 +131,10 @@ func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config := g.currentConfig()
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
-	if username != config.Admin.Username || password != config.Admin.Password {
+	user, err := g.store.GetUserByUsername(username)
+	if err != nil || !checkPassword(password, user.PasswordHash) {
 		g.renderLogin(w, "login failed")
 		return
 	}
@@ -134,10 +145,13 @@ func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g.store.AddSession(sessionID)
+	if err := g.store.AddUserSession(sessionID, user.ID); err != nil {
+		http.Error(w, "login failed", http.StatusInternalServerError)
+		return
+	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "waiteway_admin",
+		Name:     "waiteway_session",
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
@@ -153,12 +167,12 @@ func (g *Gateway) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if cookie, err := r.Cookie("waiteway_admin"); err == nil {
+	if cookie, err := r.Cookie("waiteway_session"); err == nil {
 		g.store.DeleteSession(cookie.Value)
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "waiteway_admin",
+		Name:     "waiteway_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
@@ -176,26 +190,70 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 
 	switch r.FormValue("action") {
 	case "add_policy":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminAddPolicy(w, r)
 	case "update_policy":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminUpdatePolicy(w, r)
 	case "delete_policy":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminDeletePolicy(w, r)
 	case "save_settings":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminSaveSettings(w, r)
 	case "change_password":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminChangePassword(w, r)
 	case "save_logging":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminSaveLogging(w, r)
 	case "save_load_balancer":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminSaveLoadBalancer(w, r)
 	case "clear_logs":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminClearLogs(w, r)
 	case "add_route":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminAddRoute(w, r)
 	case "update_route":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminUpdateRoute(w, r)
 	case "delete_route":
+		if !g.authorizeAdmin(r) {
+			g.renderAdminError(w, "admin access required")
+			return
+		}
 		g.handleAdminDeleteRoute(w, r)
 	default:
 		g.renderAdminError(w, "unknown admin action")
@@ -203,17 +261,20 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) authorizeAdmin(r *http.Request) bool {
-	config := g.currentConfig()
-	if config.Admin.Username == "" && config.Admin.Password == "" {
-		return true
-	}
+	user, ok := g.currentUser(r)
+	return ok && user.IsAdmin
+}
 
-	cookie, err := r.Cookie("waiteway_admin")
+func (g *Gateway) currentUser(r *http.Request) (User, bool) {
+	cookie, err := r.Cookie("waiteway_session")
 	if err != nil || cookie.Value == "" {
-		return false
+		return User{}, false
 	}
-
-	return g.store.HasSession(cookie.Value)
+	user, err := g.store.UserBySessionID(cookie.Value)
+	if err != nil {
+		return User{}, false
+	}
+	return user, true
 }
 
 func newSessionID() (string, error) {
@@ -276,12 +337,13 @@ func silentAdminRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (g *Gateway) adminPageData(errText, activeTab string) adminPageData {
+func (g *Gateway) adminPageData(user User, errText, activeTab string) adminPageData {
 	config := g.currentConfig()
 	routes := make([]Route, len(config.Routes))
 	copy(routes, config.Routes)
 	policies := make([]Policy, len(config.Policies))
 	copy(policies, config.Policies)
+	teams, _ := g.store.ListTeamsForUser(user)
 	logs, _ := g.store.ListLogs(config.LogLimit)
 	stats, routeStats := summarizeLogs(logs)
 	openRoutes := 0
@@ -295,6 +357,8 @@ func (g *Gateway) adminPageData(errText, activeTab string) adminPageData {
 	}
 
 	data := adminPageData{
+		CurrentUser:           user,
+		IsAdmin:               user.IsAdmin,
 		AdminUsername:         config.Admin.Username,
 		LogLimit:              config.LogLimit,
 		LoadBalancerMode:      config.LoadBalancer.Mode,
@@ -305,6 +369,7 @@ func (g *Gateway) adminPageData(errText, activeTab string) adminPageData {
 		AdminListen:           g.adminListen,
 		Policies:              policies,
 		Routes:                routes,
+		Teams:                 teams,
 		ActiveTab:             normalizeAdminTab(activeTab),
 		OpenRoutes:            openRoutes,
 		ProtectedRoutes:       protectedRoutes,
@@ -319,11 +384,11 @@ func (g *Gateway) adminPageData(errText, activeTab string) adminPageData {
 }
 
 func (g *Gateway) renderAdminError(w http.ResponseWriter, message string) {
-	g.renderAdminPage(w, g.adminPageData(message, "gateway"), http.StatusBadRequest)
+	g.renderAdminPage(w, g.adminPageData(User{}, message, "gateway"), http.StatusBadRequest)
 }
 
 func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, _ string, errText string) {
-	data := g.adminPageData(errText, config.ActiveTab)
+	data := g.adminPageData(User{IsAdmin: true}, errText, config.ActiveTab)
 	data.AdminUsername = config.Admin.Username
 	data.LogLimit = config.LogLimit
 	data.LoadBalancerMode = config.LoadBalancer.Mode
@@ -424,6 +489,40 @@ func splitLines(value string) []string {
 	return items
 }
 
+func splitInts(value string) []int {
+	items := splitLines(value)
+	result := make([]int, 0, len(items))
+	seen := map[int]struct{}{}
+	for _, item := range items {
+		parsed, err := strconv.Atoi(strings.TrimSpace(item))
+		if err != nil || parsed <= 0 {
+			continue
+		}
+		if _, ok := seen[parsed]; ok {
+			continue
+		}
+		seen[parsed] = struct{}{}
+		result = append(result, parsed)
+	}
+	return result
+}
+
+func joinInts(values []int) string {
+	items := make([]string, 0, len(values))
+	seen := map[int]struct{}{}
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		items = append(items, strconv.Itoa(value))
+	}
+	return strings.Join(items, "\n")
+}
+
 func intFromForm(r *http.Request, key string) (int, error) {
 	value := strings.TrimSpace(r.FormValue(key))
 	if value == "" {
@@ -490,7 +589,10 @@ func formatUptime(d time.Duration) string {
 
 func normalizeAdminTab(value string) string {
 	switch value {
-	case "policy", "logging", "settings":
+	case "policy", "logging", "settings", "config":
+		if value == "settings" {
+			return "config"
+		}
 		return value
 	default:
 		return "gateway"
