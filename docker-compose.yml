@@ -10,4 +10,3 @@ services:
       - WAITEWAY_ADMIN_USERNAME=admin
       - WAITEWAY_ADMIN_PASSWORD=change-me
     restart: unless-stopped
-
