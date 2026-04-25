@@ -181,7 +181,7 @@
         const users = await response.json();
         const container = document.getElementById('users-container');
         container.innerHTML = users.map(user => {
-          const canChangePassword = user.username !== 'admin' || currentUser?.username === 'admin';
+          const canChangePassword = !user.is_admin || user.id === currentUser?.id;
           const canDelete = user.id !== currentUser?.id && user.username !== 'admin';
           const createdDate = new Date(user.created_at);
           const createdText = `created ${createdDate.toLocaleDateString()}`;

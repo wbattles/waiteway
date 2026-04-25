@@ -302,6 +302,15 @@ func (g *Gateway) handleAPIAdminUserByID(w http.ResponseWriter, r *http.Request)
 			writeAPIError(w, http.StatusBadRequest, "new password is required")
 			return
 		}
+		targetUser, err := g.store.GetUserByID(userID)
+		if err != nil {
+			writeAPIError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		if targetUser.IsAdmin && targetUser.ID != admin.ID {
+			writeAPIError(w, http.StatusForbidden, "cannot change another admin's password")
+			return
+		}
 		if err := g.store.UpdateUserPassword(userID, req.NewPassword); err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "failed to update password")
 			return
