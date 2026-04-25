@@ -18,7 +18,6 @@ import (
 
 type adminPageData struct {
 	AdminUsername         string
-	AdminPassword         string
 	LogLimit              int
 	LoadBalancerMode      string
 	LoadBalancerHeader    string
@@ -26,8 +25,6 @@ type adminPageData struct {
 	LoadBalancerStripPort bool
 	GatewayListen         string
 	AdminListen           string
-	GatewayHealthPath     string
-	AdminHealthPath       string
 	Policies              []Policy
 	Routes                []Route
 	ActiveTab             string
@@ -37,7 +34,6 @@ type adminPageData struct {
 	LogStats              logStats
 	RouteStats            []routeStat
 	Uptime                string
-	Message               string
 	Error                 string
 }
 
@@ -104,10 +100,9 @@ func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message := r.URL.Query().Get("message")
 	errText := r.URL.Query().Get("error")
 	activeTab := normalizeAdminTab(r.URL.Query().Get("tab"))
-	g.renderAdminPage(w, g.adminPageData(message, errText, activeTab), http.StatusOK)
+	g.renderAdminPage(w, g.adminPageData(errText, activeTab), http.StatusOK)
 }
 
 func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
@@ -464,7 +459,7 @@ func silentAdminRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageData {
+func (g *Gateway) adminPageData(errText, activeTab string) adminPageData {
 	config := g.currentConfig()
 	routes := make([]Route, len(config.Routes))
 	copy(routes, config.Routes)
@@ -484,7 +479,6 @@ func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageDat
 
 	data := adminPageData{
 		AdminUsername:         config.Admin.Username,
-		AdminPassword:         config.Admin.Password,
 		LogLimit:              config.LogLimit,
 		LoadBalancerMode:      config.LoadBalancer.Mode,
 		LoadBalancerHeader:    config.LoadBalancer.ClientIPHeader,
@@ -492,8 +486,6 @@ func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageDat
 		LoadBalancerStripPort: config.LoadBalancer.StripPort,
 		GatewayListen:         g.listenAddr,
 		AdminListen:           g.adminListen,
-		GatewayHealthPath:     "/health",
-		AdminHealthPath:       "/health",
 		Policies:              policies,
 		Routes:                routes,
 		ActiveTab:             normalizeAdminTab(activeTab),
@@ -503,7 +495,6 @@ func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageDat
 		LogStats:              stats,
 		RouteStats:            routeStats,
 		Uptime:                formatUptime(time.Since(g.startedAt)),
-		Message:               message,
 		Error:                 errText,
 	}
 
@@ -511,13 +502,12 @@ func (g *Gateway) adminPageData(message, errText, activeTab string) adminPageDat
 }
 
 func (g *Gateway) renderAdminError(w http.ResponseWriter, message string) {
-	g.renderAdminPage(w, g.adminPageData("", message, "gateway"), http.StatusBadRequest)
+	g.renderAdminPage(w, g.adminPageData(message, "gateway"), http.StatusBadRequest)
 }
 
-func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, message, errText string) {
-	data := g.adminPageData(message, errText, config.ActiveTab)
+func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, _ string, errText string) {
+	data := g.adminPageData(errText, config.ActiveTab)
 	data.AdminUsername = config.Admin.Username
-	data.AdminPassword = config.Admin.Password
 	data.LogLimit = config.LogLimit
 	data.LoadBalancerMode = config.LoadBalancer.Mode
 	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader
@@ -572,7 +562,7 @@ func summarizeLogs(logs []requestLog) (logStats, []routeStat) {
 	var totalDuration time.Duration
 
 	for _, entry := range logs {
-		name, _ := routeStatName(entry)
+		name := routeStatName(entry)
 		routeCounts[name]++
 
 		switch {
@@ -610,14 +600,14 @@ func summarizeLogs(logs []requestLog) (logStats, []routeStat) {
 	return stats, routeStats
 }
 
-func routeStatName(entry requestLog) (string, bool) {
+func routeStatName(entry requestLog) string {
 	name := strings.TrimSpace(entry.Path)
 	name = strings.TrimPrefix(name, "/")
 	if name == "" {
 		name = "root"
 	}
 
-	return name, strings.TrimSpace(entry.Route) != ""
+	return name
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")

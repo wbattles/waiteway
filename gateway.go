@@ -80,6 +80,13 @@ type statusRecorder struct {
 	status int
 }
 
+var logBufferPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 0, 256)
+		return &buf
+	},
+}
+
 func newGateway(store *Store, config Config) (*Gateway, error) {
 	tmpl, err := template.New("admin").Funcs(template.FuncMap{
 		"formatDurationMS": formatDurationMS,
@@ -249,8 +256,14 @@ func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *h
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		return applyResponsePolicy(policy, resp)
 	}
+	// Every proxy uses the shared tuned transport so connections can be
+	// pooled across routes that hit the same upstream. Routes with retries
+	// wrap that same transport so retries reuse the pool too.
+	transport := sharedTransport()
 	if policy != nil && policy.RetryCount > 0 {
-		proxy.Transport = &retryTransport{base: http.DefaultTransport, retries: policy.RetryCount}
+		proxy.Transport = &retryTransport{base: transport, retries: policy.RetryCount}
+	} else {
+		proxy.Transport = transport
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -290,7 +303,6 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	needsClientIP := true
 	route, ok := g.matchRoute(r.URL.Path)
 	if !ok {
 		clientIP := g.clientIP(r)
@@ -304,7 +316,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		apiKey = requestAPIKey(r)
 	}
 
-	needsClientIP = routeNeedsClientAddr(route)
+	needsClientIP := routeNeedsClientAddr(route)
 	clientIP := ""
 	if needsClientIP {
 		clientIP = g.clientIP(r)
@@ -371,7 +383,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	var writer http.ResponseWriter = recorder
 	var cacheBuf *cacheRecorder
 	if cacheable {
-		cacheBuf = &cacheRecorder{header: make(http.Header), status: http.StatusOK}
+		cacheBuf = getCacheRecorder()
 		writer = cacheBuf
 	}
 
@@ -384,6 +396,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		copyResponse(w, cacheBuf)
 		recorder.status = cacheBuf.status
 		g.storeCachedPolicyResponse(route, cacheKeyValue, cacheNow, cacheBuf)
+		putCacheRecorder(cacheBuf)
 	}
 	if route.policy != nil && route.policy.circuitBreaker != nil {
 		if recorder.status >= http.StatusInternalServerError {
@@ -425,7 +438,8 @@ func (g *Gateway) recordRequest(r *http.Request, clientIP, routeName string, sta
 func (g *Gateway) logRequest(entry requestLog) {
 	// Hand-built JSON to avoid the map[string]any + reflection overhead of
 	// json.Marshal on every log entry. Field order is intentional and stable.
-	buf := make([]byte, 0, 256)
+	bufPtr := logBufferPool.Get().(*[]byte)
+	buf := (*bufPtr)[:0]
 	buf = append(buf, '{', '"', 't', 'i', 'm', 'e', '"', ':', '"')
 	buf = entry.Time.AppendFormat(buf, time.RFC3339Nano)
 	buf = append(buf, `","level":"info","event":"request","method":`...)
@@ -445,6 +459,8 @@ func (g *Gateway) logRequest(entry requestLog) {
 	if _, err := os.Stdout.Write(buf); err != nil {
 		log.Printf("waiteway failed to write request log: %v", err)
 	}
+	*bufPtr = buf[:0]
+	logBufferPool.Put(bufPtr)
 }
 
 func appendJSONString(buf []byte, s string) []byte {

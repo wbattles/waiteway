@@ -91,6 +91,15 @@ type cacheRecorder struct {
 	status int
 }
 
+var cacheRecorderPool = sync.Pool{
+	New: func() any {
+		return &cacheRecorder{
+			header: make(http.Header),
+			status: http.StatusOK,
+		}
+	},
+}
+
 type retryTransport struct {
 	base    http.RoundTripper
 	retries int
@@ -569,6 +578,21 @@ func (w *cacheRecorder) WriteHeader(statusCode int) {
 }
 
 func (w *cacheRecorder) Flush() {}
+
+func getCacheRecorder() *cacheRecorder {
+	recorder := cacheRecorderPool.Get().(*cacheRecorder)
+	recorder.status = http.StatusOK
+	return recorder
+}
+
+func putCacheRecorder(recorder *cacheRecorder) {
+	for key := range recorder.header {
+		delete(recorder.header, key)
+	}
+	recorder.body.Reset()
+	recorder.status = http.StatusOK
+	cacheRecorderPool.Put(recorder)
+}
 
 func cacheKey(r *http.Request) string {
 	return r.Method + " " + r.URL.RequestURI()

@@ -335,7 +335,7 @@ const adminTemplate = `<!doctype html>
                     </tr>
                     <tr>
                       <td><strong>gateway health</strong></td>
-                      <td>{{ .GatewayListen }}{{ .GatewayHealthPath }}</td>
+                      <td>{{ .GatewayListen }}/health</td>
                       <td></td>
                     </tr>
                     <tr>
@@ -345,7 +345,7 @@ const adminTemplate = `<!doctype html>
                     </tr>
                     <tr>
                       <td><strong>admin health</strong></td>
-                      <td>{{ .AdminListen }}{{ .AdminHealthPath }}</td>
+                      <td>{{ .AdminListen }}/health</td>
                       <td></td>
                     </tr>
                   </tbody>
