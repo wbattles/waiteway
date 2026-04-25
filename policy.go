@@ -499,9 +499,13 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.GetBody != nil {
 		getBody = func() (io.ReadCloser, error) { return req.GetBody() }
 	} else if req.Body != nil && req.ContentLength != 0 {
-		bodyBytes, readErr := io.ReadAll(req.Body)
+		originalBody := req.Body
+		bodyBytes, readErr := io.ReadAll(originalBody)
 		if readErr != nil {
 			return nil, readErr
+		}
+		if closeErr := originalBody.Close(); closeErr != nil {
+			return nil, closeErr
 		}
 		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		getBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(bodyBytes)), nil }
