@@ -307,6 +307,15 @@ func (g *Gateway) handleAPIAdminUserByID(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusBadRequest, "cannot delete yourself")
 		return
 	}
+	target, err := g.store.GetUserByID(userID)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if target.IsAdmin {
+		writeAPIError(w, http.StatusBadRequest, "cannot delete an admin user")
+		return
+	}
 	if err := g.store.DeleteUser(userID); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "failed to delete user")
 		return

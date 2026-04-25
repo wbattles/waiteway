@@ -81,18 +81,18 @@ CREATE TABLE IF NOT EXISTS request_logs (
 	duration_ns INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
-	id         TEXT PRIMARY KEY,
-	created_at TEXT NOT NULL,
-	user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE
-	);
-
 CREATE TABLE IF NOT EXISTS users (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
 	username      TEXT NOT NULL UNIQUE,
 	password_hash TEXT NOT NULL,
 	is_admin      INTEGER NOT NULL DEFAULT 0,
 	created_at    TEXT NOT NULL
+	);
+
+CREATE TABLE IF NOT EXISTS sessions (
+	id         TEXT PRIMARY KEY,
+	created_at TEXT NOT NULL,
+	user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE
 	);
 
 CREATE TABLE IF NOT EXISTS api_keys (
