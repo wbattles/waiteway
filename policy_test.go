@@ -593,5 +593,3 @@ func TestPolicyMultipleFeatures(t *testing.T) {
 		t.Fatalf("expected X-Injected 'yes', got %q", receivedHeader)
 	}
 }
-
-
