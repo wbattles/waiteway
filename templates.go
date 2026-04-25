@@ -516,7 +516,7 @@ const adminTemplate = `<!doctype html>
               </div>
               <div class="policy-field">
                 <label for="policy-basic-auth-password">password</label>
-                <input id="policy-basic-auth-password" type="text" name="policy_basic_auth_password" value="">
+                <input id="policy-basic-auth-password" type="password" name="policy_basic_auth_password" value="">
               </div>
             </div>
           </section>
