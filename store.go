@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -474,7 +475,14 @@ func (s *Store) AddSession(id string) error {
 func (s *Store) HasSession(id string) bool {
 	var exists int
 	err := s.db.QueryRow("SELECT 1 FROM sessions WHERE id = ? LIMIT 1", id).Scan(&exists)
-	return err == nil
+	if err == nil {
+		return true
+	}
+	if err == sql.ErrNoRows {
+		return false
+	}
+	log.Printf("waiteway failed to check session: %v", err)
+	return false
 }
 
 func (s *Store) DeleteSession(id string) error {

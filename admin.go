@@ -505,7 +505,7 @@ func (g *Gateway) renderAdminError(w http.ResponseWriter, message string) {
 	g.renderAdminPage(w, g.adminPageData(message, "gateway"), http.StatusBadRequest)
 }
 
-func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, errText string) {
+func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, _ string, errText string) {
 	data := g.adminPageData(errText, config.ActiveTab)
 	data.AdminUsername = config.Admin.Username
 	data.LogLimit = config.LogLimit
