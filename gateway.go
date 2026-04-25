@@ -198,7 +198,10 @@ func compileConfig(config Config) ([]compiledRoute, error) {
 			}
 		}
 
-		proxy := newSingleHostProxy(targetURL, route, policyRef)
+		proxy, err := newSingleHostProxy(targetURL, route, policyRef)
+		if err != nil {
+			return nil, fmt.Errorf("build proxy for route %q: %w", route.Name, err)
+		}
 		routes = append(routes, compiledRoute{
 			Route:   route,
 			proxy:   proxy,
@@ -214,7 +217,7 @@ func compileConfig(config Config) ([]compiledRoute, error) {
 	return routes, nil
 }
 
-func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *httputil.ReverseProxy {
+func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) (*httputil.ReverseProxy, error) {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	prefixLen := len(route.PathPrefix)
 	targetPath := target.Path
@@ -259,7 +262,10 @@ func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *h
 	// Every proxy uses the shared tuned transport so connections can be
 	// pooled across routes that hit the same upstream. Routes with retries
 	// wrap that same transport so retries reuse the pool too.
-	transport := sharedTransport()
+	transport, err := sharedTransport()
+	if err != nil {
+		return nil, err
+	}
 	if policy != nil && policy.RetryCount > 0 {
 		proxy.Transport = &retryTransport{base: transport, retries: policy.RetryCount}
 	} else {
@@ -274,7 +280,7 @@ func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *h
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 	}
 
-	return proxy
+	return proxy, nil
 }
 
 func joinURLQuery(targetQuery, requestQuery string) string {

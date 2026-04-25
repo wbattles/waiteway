@@ -73,3 +73,7 @@ resources:
   limits:
     cpu: 200m
     memory: 128Mi
+
+extraEnv: []
+extraVolumeMounts: []
+extraVolumes: []
