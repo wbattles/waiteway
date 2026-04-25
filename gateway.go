@@ -242,7 +242,7 @@ func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) *h
 		} else {
 			req.URL.Path = joinURLPath(targetPath, incomingPath)
 		}
-		req.URL.RawPath = req.URL.Path
+		req.URL.RawPath = ""
 		req.URL.RawQuery = joinURLQuery(targetQuery, req.URL.RawQuery)
 
 		req.Host = target.Host
@@ -372,8 +372,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 			if clientIP == "" {
 				clientIP = g.clientIP(r)
 			}
-			w.Header().Set("X-Waiteway-Cache", "HIT")
-			writeCachedResponse(w, cached)
+			writeCachedResponse(w, cached, "HIT")
 			g.recordRequest(r, clientIP, route.Name, cached.status, 0, cacheNow)
 			return
 		}
@@ -392,8 +391,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	end := time.Now()
 
 	if cacheBuf != nil {
-		w.Header().Set("X-Waiteway-Cache", "MISS")
-		copyResponse(w, cacheBuf)
+		copyResponse(w, cacheBuf, "MISS")
 		recorder.status = cacheBuf.status
 		g.storeCachedPolicyResponse(route, cacheKeyValue, cacheNow, cacheBuf)
 		putCacheRecorder(cacheBuf)

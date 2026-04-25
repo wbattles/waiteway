@@ -603,19 +603,25 @@ func cacheKey(r *http.Request) string {
 	return r.Method + " " + r.URL.RequestURI()
 }
 
-func copyResponse(w http.ResponseWriter, recorder *cacheRecorder) {
+func copyResponse(w http.ResponseWriter, recorder *cacheRecorder, cacheState string) {
 	dst := w.Header()
 	for key, values := range recorder.header {
 		dst[key] = values
+	}
+	if cacheState != "" {
+		dst.Set("X-Waiteway-Cache", cacheState)
 	}
 	w.WriteHeader(recorder.status)
 	_, _ = w.Write(recorder.body.Bytes())
 }
 
-func writeCachedResponse(w http.ResponseWriter, cached cachedResponse) {
+func writeCachedResponse(w http.ResponseWriter, cached cachedResponse, cacheState string) {
 	dst := w.Header()
 	for key, values := range cached.header {
 		dst[key] = values
+	}
+	if cacheState != "" {
+		dst.Set("X-Waiteway-Cache", cacheState)
 	}
 	w.WriteHeader(cached.status)
 	_, _ = w.Write(cached.body)
