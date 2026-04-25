@@ -606,7 +606,7 @@ func cacheKey(r *http.Request) string {
 func copyResponse(w http.ResponseWriter, recorder *cacheRecorder, cacheState string) {
 	dst := w.Header()
 	for key, values := range recorder.header {
-		dst[key] = values
+		dst[key] = append([]string(nil), values...)
 	}
 	if cacheState != "" {
 		dst.Set("X-Waiteway-Cache", cacheState)
@@ -618,7 +618,7 @@ func copyResponse(w http.ResponseWriter, recorder *cacheRecorder, cacheState str
 func writeCachedResponse(w http.ResponseWriter, cached cachedResponse, cacheState string) {
 	dst := w.Header()
 	for key, values := range cached.header {
-		dst[key] = values
+		dst[key] = append([]string(nil), values...)
 	}
 	if cacheState != "" {
 		dst.Set("X-Waiteway-Cache", cacheState)

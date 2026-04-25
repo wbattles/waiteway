@@ -768,6 +768,14 @@ func buildRouteMatcher(routes []compiledRoute) *routeMatcher {
 		}
 		matcher.buckets[key] = append(matcher.buckets[key], route)
 	}
+	for key := range matcher.buckets {
+		sort.Slice(matcher.buckets[key], func(i, j int) bool {
+			return len(matcher.buckets[key][i].PathPrefix) > len(matcher.buckets[key][j].PathPrefix)
+		})
+	}
+	sort.Slice(matcher.root, func(i, j int) bool {
+		return len(matcher.root[i].PathPrefix) > len(matcher.root[j].PathPrefix)
+	})
 	return matcher
 }
 
