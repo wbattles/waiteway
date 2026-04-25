@@ -304,7 +304,11 @@ func (s *Store) UpdateTeam(teamID int, name, acronym *string, userIDs []int, rep
 	defer tx.Rollback()
 
 	if name != nil {
-		if _, err := tx.Exec("UPDATE teams SET name = ? WHERE id = ?", strings.TrimSpace(*name), teamID); err != nil {
+		value := strings.TrimSpace(*name)
+		if value == "" {
+			return Team{}, fmt.Errorf("team name is required")
+		}
+		if _, err := tx.Exec("UPDATE teams SET name = ? WHERE id = ?", value, teamID); err != nil {
 			return Team{}, err
 		}
 	}

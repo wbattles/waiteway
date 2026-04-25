@@ -454,6 +454,10 @@ func (g *Gateway) handleAPIMyTeams(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodPost:
+		if !user.IsAdmin {
+			writeAPIError(w, http.StatusForbidden, "admin access required")
+			return
+		}
 		var req teamRequest
 		if !decodeJSON(w, r, &req) {
 			return

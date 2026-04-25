@@ -47,16 +47,16 @@
     .api-keys-panel.user-list-panel { height: auto; min-height: 0; flex: 1; }
     .api-keys-panel h3 { border-bottom: none; padding-bottom: 0; margin-bottom: 8px; }
     .api-keys-footer { padding: 8px 20px 12px 20px; flex-shrink: 0; }
-    .users-layout, .projects-layout { display: grid; grid-template-columns: 300px 1fr; gap: 24px; height: 100%; }
-    .create-user-panel, .create-project-panel { padding: 20px; border: 1px solid #000; height: fit-content; }
-    .create-user-panel h3, .create-project-panel h3 { margin-bottom: 16px; }
-    .create-user-panel form, .create-project-panel form { display: flex; flex-direction: column; gap: 12px; }
-    .create-user-panel input[type="text"], .create-user-panel input[type="password"], .create-project-panel input[type="text"] { border: 1px solid #000; padding: 8px 10px; font-size: 0.875rem; font-family: inherit; outline: none; width: 100%; box-sizing: border-box; }
-    .create-user-panel label, .create-project-panel label { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; }
-    .create-user-panel button, .create-project-panel button { margin-top: 4px; }
+    .users-layout, .teams-layout { display: grid; grid-template-columns: 300px 1fr; gap: 24px; height: 100%; }
+    .create-user-panel, .create-team-panel { padding: 20px; border: 1px solid #000; height: fit-content; }
+    .create-user-panel h3, .create-team-panel h3 { margin-bottom: 16px; }
+    .create-user-panel form, .create-team-panel form { display: flex; flex-direction: column; gap: 12px; }
+    .create-user-panel input[type="text"], .create-user-panel input[type="password"], .create-team-panel input[type="text"] { border: 1px solid #000; padding: 8px 10px; font-size: 0.875rem; font-family: inherit; outline: none; width: 100%; box-sizing: border-box; }
+    .create-user-panel label, .create-team-panel label { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; }
+    .create-user-panel button, .create-team-panel button { margin-top: 4px; }
     .user-list-panel { border: 1px solid #000; display: flex; flex-direction: column; height: 500px; }
     .user-list-panel h3 { padding: 16px 20px 0 20px; margin-bottom: 16px; border-bottom: 1px solid #000; padding-bottom: 12px; flex-shrink: 0; }
-    #my-projects-list, #api-keys-container { padding: 0 20px 20px 20px; flex: 1; overflow-y: auto; min-height: 0; }
+    #my-teams-list, #api-keys-container { padding: 0 20px 20px 20px; flex: 1; overflow-y: auto; min-height: 0; }
     .user-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid #000; gap: 16px; }
     .user-item:last-child { border-bottom: none; }
     .user-item:first-child { padding-top: 0; }
@@ -72,7 +72,7 @@
     body.dark .modal-box input, body.dark .modal-box textarea { border-color: #fff; background: #000; color: #fff; }
     body.dark .admin-tabs { border-bottom-color: #fff; background: #000; }
     body.dark .tab-btn.active { border-bottom-color: #fff; }
-    body.dark .create-user-panel, body.dark .create-project-panel, body.dark .settings-panel, body.dark .user-list-panel { border-color: #fff; }
+    body.dark .create-user-panel, body.dark .create-team-panel, body.dark .settings-panel, body.dark .user-list-panel { border-color: #fff; }
     body.dark .user-item { border-bottom-color: #fff; }
     body.dark .user-list-panel h3 { border-bottom-color: #fff; }
     body.dark .admin-badge { border-color: #fff; }
@@ -100,8 +100,8 @@
 
   <main class="admin-main">
     <nav class="admin-tabs">
-      <button class="tab-btn active" onclick="showTab('settings')">settings</button>
-      <button class="tab-btn" onclick="showTab('teams')">teams</button>
+      <button class="tab-btn active" onclick="showTab('settings', this)">settings</button>
+      <button class="tab-btn" onclick="showTab('teams', this)">teams</button>
     </nav>
 
     <div class="tab-content">
@@ -163,7 +163,7 @@
 
           <div class="user-list-panel">
             <h3>my teams</h3>
-            <div id="my-projects-list"></div>
+            <div id="my-teams-list"></div>
           </div>
         </div>
       </section>
@@ -193,16 +193,16 @@
     </div>
   </div>
 
-  <div id="project-modal" class="modal hidden">
+  <div id="team-modal" class="modal hidden">
     <div class="modal-box">
       <h2>edit users</h2>
       <div class="user-selection">
-        <div id="project-users-list" class="user-checkbox-list">
+        <div id="team-users-list" class="user-checkbox-list">
         </div>
       </div>
       <div class="modal-actions">
-        <button onclick="saveProjectUsers()">save</button>
-        <button onclick="closeProjectModal()">cancel</button>
+        <button onclick="saveTeamUsers()">save</button>
+        <button onclick="closeTeamModal()">cancel</button>
       </div>
     </div>
   </div>
@@ -210,7 +210,7 @@
   <script>
     let currentUser = { id: {{ .CurrentUser.ID }}, username: {{ printf "%q" .CurrentUser.Username }}, is_admin: {{ if .IsAdmin }}true{{ else }}false{{ end }} };
     let confirmCallback = null;
-    let editingProjectId = null;
+    let editingTeamId = null;
     let allUsers = [];
 
     function showConfirmModal(title, message, callback) {
@@ -242,12 +242,14 @@
       });
     });
 
-    function showTab(tabName) {
+    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    function showTab(tabName, btn) {
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.getElementById(`${tabName}-tab`).classList.add('active');
-      event.target.classList.add('active');
-      if (tabName === 'teams') loadMyProjectsList();
+      btn.classList.add('active');
+      if (tabName === 'teams') loadMyTeamsList();
     }
 
     document.getElementById('password-form').addEventListener('submit', async e => {
@@ -338,12 +340,12 @@
       }
     }
 
-    async function loadMyProjectsList() {
+    async function loadMyTeamsList() {
       try {
         const response = await fetch('/api/teams');
         if (!response.ok) return;
         const teams = await response.json();
-        const container = document.getElementById('my-projects-list');
+        const container = document.getElementById('my-teams-list');
         if (teams.length === 0) {
           container.innerHTML = '<div class="user-activity">no teams</div>';
           return;
@@ -354,14 +356,14 @@
             <div class="user-item">
               <div class="user-main">
                 <div class="user-identity">
-                  <div class="username">${p.name}</div>
-                  <span class="admin-badge">${p.acronym}</span>
+                  <div class="username">${esc(p.name)}</div>
+                  <span class="admin-badge">${esc(p.acronym)}</span>
                 </div>
               </div>
               ${canEdit ? `
                 <div class="user-actions">
-                  <button onclick="editProjectUsers(${p.id})">users</button>
-                  <button onclick="deleteMyProject(${p.id}, '${p.name}')">delete</button>
+                  <button onclick="editTeamUsers(${p.id})">users</button>
+                  <button onclick="deleteMyTeam(${p.id}, '${esc(p.name)}')">delete</button>
                 </div>
               ` : ''}
             </div>
@@ -389,20 +391,20 @@
       });
       if (response.ok) {
         document.getElementById('create-team-form').reset();
-        loadMyProjectsList();
+        loadMyTeamsList();
       } else {
         const error = await response.json();
         showConfirmModal('', error.detail || 'failed to create team', null);
       }
     });
 
-    async function editProjectUsers(teamId) {
-      editingProjectId = teamId;
+    async function editTeamUsers(teamId) {
+      editingTeamId = teamId;
       await loadAllUsers();
       const response = await fetch(`/api/teams/${teamId}/users`);
       const teamUsers = await response.json();
       const selectedIds = teamUsers.map(u => u.id);
-      const container = document.getElementById('project-users-list');
+      const container = document.getElementById('team-users-list');
       container.innerHTML = allUsers.map(u => {
         const checked = selectedIds.includes(u.id);
         const locked = !!u.is_admin;
@@ -413,40 +415,40 @@
           </label>
         `;
       }).join('');
-      document.getElementById('project-modal').classList.remove('hidden');
+      document.getElementById('team-modal').classList.remove('hidden');
     }
 
-    async function saveProjectUsers() {
-      const selected = Array.from(document.querySelectorAll('#project-users-list input:checked, #project-users-list input:disabled')).map(cb => parseInt(cb.value));
-      const response = await fetch(`/api/me/teams/${editingProjectId}`, {
+    async function saveTeamUsers() {
+      const selected = Array.from(document.querySelectorAll('#team-users-list input:checked, #team-users-list input:disabled')).map(cb => parseInt(cb.value));
+      const response = await fetch(`/api/me/teams/${editingTeamId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_ids: selected }),
       });
       if (response.ok) {
-        closeProjectModal();
-        loadMyProjectsList();
+        closeTeamModal();
+        loadMyTeamsList();
       } else {
         const error = await response.json();
         showConfirmModal('', error.detail || 'failed to update team', null);
       }
     }
 
-    function closeProjectModal() {
-      document.getElementById('project-modal').classList.add('hidden');
-      editingProjectId = null;
+    function closeTeamModal() {
+      document.getElementById('team-modal').classList.add('hidden');
+      editingTeamId = null;
     }
 
-    document.getElementById('project-modal').addEventListener('click', e => {
-      if (e.target === document.getElementById('project-modal')) closeProjectModal();
+    document.getElementById('team-modal').addEventListener('click', e => {
+      if (e.target === document.getElementById('team-modal')) closeTeamModal();
     });
 
-    async function deleteMyProject(teamId, teamName) {
+    async function deleteMyTeam(teamId, teamName) {
       showConfirmModal('', `delete team ${teamName}?`, async () => {
         try {
           const response = await fetch(`/api/me/teams/${teamId}`, { method: 'DELETE' });
           if (response.ok) {
-            loadMyProjectsList();
+            loadMyTeamsList();
           } else {
             const error = await response.json();
             showConfirmModal('', error.detail || 'failed to delete team', null);
