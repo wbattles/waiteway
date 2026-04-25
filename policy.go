@@ -516,12 +516,17 @@ func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
 	c.mu.RLock()
 	entry, ok := c.entries[key]
 	c.mu.RUnlock()
-	if !ok || now.After(entry.expiresAt) {
-		if ok {
-			c.mu.Lock()
+	if !ok {
+		return cachedResponse{}, false
+	}
+	if now.After(entry.expiresAt) {
+		c.mu.Lock()
+		// re-check under write lock so we don't delete a fresh entry written
+		// in between the unlock and lock above.
+		if existing, stillOK := c.entries[key]; stillOK && now.After(existing.expiresAt) {
 			delete(c.entries, key)
-			c.mu.Unlock()
 		}
+		c.mu.Unlock()
 		return cachedResponse{}, false
 	}
 	return entry, true
@@ -570,20 +575,18 @@ func cacheKey(r *http.Request) string {
 }
 
 func copyResponse(w http.ResponseWriter, recorder *cacheRecorder) {
+	dst := w.Header()
 	for key, values := range recorder.header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
+		dst[key] = values
 	}
 	w.WriteHeader(recorder.status)
 	_, _ = w.Write(recorder.body.Bytes())
 }
 
 func writeCachedResponse(w http.ResponseWriter, cached cachedResponse) {
+	dst := w.Header()
 	for key, values := range cached.header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
+		dst[key] = values
 	}
 	w.WriteHeader(cached.status)
 	_, _ = w.Write(cached.body)

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -348,40 +349,45 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	r, cancelTimeout := requestWithPolicyContext(r, route.policy)
 	defer cancelTimeout()
+
+	cacheable := shouldCacheRouteResponse(route, r)
 	cacheKeyValue := ""
 	cacheNow := time.Time{}
-	if shouldCacheRouteResponse(route, r) {
+	if cacheable {
 		cacheKeyValue = cacheKey(r)
 		cacheNow = time.Now()
-	}
-
-	if cached, ok := g.cachedPolicyResponse(route, cacheKeyValue, cacheNow); ok {
-		if clientIP == "" {
-			clientIP = g.clientIP(r)
+		if cached, ok := g.cachedPolicyResponse(route, cacheKeyValue, cacheNow); ok {
+			if clientIP == "" {
+				clientIP = g.clientIP(r)
+			}
+			w.Header().Set("X-Waiteway-Cache", "HIT")
+			writeCachedResponse(w, cached)
+			g.recordRequest(r, clientIP, route.Name, cached.status, 0, cacheNow)
+			return
 		}
-		w.Header().Set("X-Waiteway-Cache", "HIT")
-		writeCachedResponse(w, cached)
-		g.recordRequest(r, clientIP, route.Name, cached.status, 0, time.Now())
-		return
 	}
 
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	writer := http.ResponseWriter(recorder)
-	cacheRecorder := &cacheRecorder{header: make(http.Header), status: http.StatusOK}
-	if shouldCacheRouteResponse(route, r) {
-		writer = cacheRecorder
+	var writer http.ResponseWriter = recorder
+	var cacheBuf *cacheRecorder
+	if cacheable {
+		cacheBuf = &cacheRecorder{header: make(http.Header), status: http.StatusOK}
+		writer = cacheBuf
 	}
+
 	start := time.Now()
 	route.proxy.ServeHTTP(writer, r)
-	if writer == cacheRecorder {
+	end := time.Now()
+
+	if cacheBuf != nil {
 		w.Header().Set("X-Waiteway-Cache", "MISS")
-		copyResponse(w, cacheRecorder)
-		recorder.status = cacheRecorder.status
-		g.storeCachedPolicyResponse(route, cacheKeyValue, cacheNow, cacheRecorder)
+		copyResponse(w, cacheBuf)
+		recorder.status = cacheBuf.status
+		g.storeCachedPolicyResponse(route, cacheKeyValue, cacheNow, cacheBuf)
 	}
 	if route.policy != nil && route.policy.circuitBreaker != nil {
 		if recorder.status >= http.StatusInternalServerError {
-			route.policy.circuitBreaker.RecordFailure(time.Now())
+			route.policy.circuitBreaker.RecordFailure(end)
 		} else {
 			route.policy.circuitBreaker.RecordSuccess()
 		}
@@ -389,7 +395,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if clientIP == "" {
 		clientIP = g.clientIP(r)
 	}
-	g.recordRequest(r, clientIP, route.Name, recorder.status, time.Since(start), time.Now())
+	g.recordRequest(r, clientIP, route.Name, recorder.status, end.Sub(start), end)
 }
 
 func (g *Gateway) recordRequest(r *http.Request, clientIP, routeName string, status int, duration time.Duration, now time.Time) {
@@ -417,27 +423,36 @@ func (g *Gateway) recordRequest(r *http.Request, clientIP, routeName string, sta
 }
 
 func (g *Gateway) logRequest(entry requestLog) {
-	payload := map[string]any{
-		"time":        entry.Time.Format(time.RFC3339Nano),
-		"level":       "info",
-		"event":       "request",
-		"method":      entry.Method,
-		"path":        entry.Path,
-		"route":       entry.Route,
-		"status":      entry.Status,
-		"ip":          entry.RemoteAddr,
-		"duration_ms": float64(entry.Duration) / float64(time.Millisecond),
-	}
+	// Hand-built JSON to avoid the map[string]any + reflection overhead of
+	// json.Marshal on every log entry. Field order is intentional and stable.
+	buf := make([]byte, 0, 256)
+	buf = append(buf, '{', '"', 't', 'i', 'm', 'e', '"', ':', '"')
+	buf = entry.Time.AppendFormat(buf, time.RFC3339Nano)
+	buf = append(buf, `","level":"info","event":"request","method":`...)
+	buf = appendJSONString(buf, entry.Method)
+	buf = append(buf, `,"path":`...)
+	buf = appendJSONString(buf, entry.Path)
+	buf = append(buf, `,"route":`...)
+	buf = appendJSONString(buf, entry.Route)
+	buf = append(buf, `,"status":`...)
+	buf = strconv.AppendInt(buf, int64(entry.Status), 10)
+	buf = append(buf, `,"ip":`...)
+	buf = appendJSONString(buf, entry.RemoteAddr)
+	buf = append(buf, `,"duration_ms":`...)
+	buf = strconv.AppendFloat(buf, float64(entry.Duration)/float64(time.Millisecond), 'f', -1, 64)
+	buf = append(buf, '}', '\n')
 
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("waiteway failed to encode request log: %v", err)
-		return
-	}
-
-	if _, err := os.Stdout.Write(append(encoded, '\n')); err != nil {
+	if _, err := os.Stdout.Write(buf); err != nil {
 		log.Printf("waiteway failed to write request log: %v", err)
 	}
+}
+
+func appendJSONString(buf []byte, s string) []byte {
+	encoded, err := json.Marshal(s)
+	if err != nil {
+		return append(buf, '"', '"')
+	}
+	return append(buf, encoded...)
 }
 
 // drainLogs is a single background consumer for request logs. It writes each
