@@ -106,7 +106,8 @@
     .policy-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
     .policy-field label { font-size: 0.8rem; }
     .policy-add-modal { z-index: 20; }
-    .policy-add-list { display: flex; flex-direction: column; gap: 8px; max-height: 160px; overflow-y: auto; }
+    .policy-add-modal-box { width: 520px; max-height: 90vh; overflow-y: auto; overflow-x: hidden; }
+    .policy-add-list { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
     .policy-add-option { width: 100%; text-align: left; padding: 12px; border: 1px solid #000; background: #fff; display: flex; flex-direction: column; gap: 4px; }
     .policy-add-option small { opacity: 0.7; }
     body.dark { background: #000; color: #fff; }
@@ -154,7 +155,8 @@
     @media (max-width: 700px) {
       .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .config-grid { grid-template-columns: 1fr; }
-      .policy-modal-box { width: 92vw; }
+      .policy-modal-box,
+      .policy-add-modal-box { width: 92vw; }
       .policy-field-grid { grid-template-columns: minmax(0, 1fr); }
       .policy-builder-actions { flex-direction: column; align-items: stretch; }
     }
@@ -470,7 +472,7 @@
   </div>
 
   <div id="settings-modal" class="modal hidden">
-    <div class="modal-box">
+    <div class="modal-box policy-add-modal-box">
       <h2 id="settings-modal-title">edit setting</h2>
       <form method="post" action="/?tab=config">
         <input type="hidden" id="settings-action" name="action" value="save_logging">
