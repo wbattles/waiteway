@@ -67,6 +67,7 @@ Click **add policy**, name it, then click **add feature** to pick what you need:
 | retry | retry failed upstream calls |
 | api key auth | require X-API-Key or Bearer token |
 | basic auth | require username and password |
+| pii scrubber | redact common PII before the request reaches the upstream |
 | rate limiting | limit requests per time window |
 | method allow list | only allow specific HTTP methods |
 | path rewrite | replace the matched path prefix |

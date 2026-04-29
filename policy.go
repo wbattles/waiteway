@@ -17,6 +17,14 @@ type Policy struct {
 	RetryCount                 int
 	RequireAPIKey              bool
 	RequireUserAuth            bool
+	ScrubPII                   bool
+	ScrubPIIRequestBody        bool
+	ScrubPIIQueryParams        bool
+	ScrubPIIHeaders            bool
+	ScrubPIIEmail              bool
+	ScrubPIIPhone              bool
+	ScrubPIISSN                bool
+	ScrubPIICreditCard         bool
 	RateLimitRequests          int
 	RateLimitWindowSeconds     int
 	AllowedMethods             []string
@@ -182,6 +190,9 @@ func policySummary(policy Policy) string {
 	}
 	if policy.RequireUserAuth {
 		parts = append(parts, "username auth")
+	}
+	if policy.ScrubPII {
+		parts = append(parts, "pii scrubber")
 	}
 	if policy.RateLimitRequests > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%ds", policy.RateLimitRequests, policy.RateLimitWindowSeconds))

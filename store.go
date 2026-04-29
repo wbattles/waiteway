@@ -27,6 +27,14 @@ CREATE TABLE IF NOT EXISTS policies (
 	retry_count              INTEGER NOT NULL DEFAULT 0,
 	require_api_key          INTEGER NOT NULL DEFAULT 0,
 	require_user_auth        INTEGER NOT NULL DEFAULT 0,
+	scrub_pii                INTEGER NOT NULL DEFAULT 0,
+	scrub_pii_request_body   INTEGER NOT NULL DEFAULT 0,
+	scrub_pii_query_params   INTEGER NOT NULL DEFAULT 0,
+	scrub_pii_headers        INTEGER NOT NULL DEFAULT 0,
+	scrub_pii_email          INTEGER NOT NULL DEFAULT 0,
+	scrub_pii_phone          INTEGER NOT NULL DEFAULT 0,
+	scrub_pii_ssn            INTEGER NOT NULL DEFAULT 0,
+	scrub_pii_credit_card    INTEGER NOT NULL DEFAULT 0,
 	rate_limit_requests      INTEGER NOT NULL DEFAULT 0,
 	rate_limit_window_seconds INTEGER NOT NULL DEFAULT 0,
 	allowed_methods          TEXT NOT NULL DEFAULT '',
@@ -128,6 +136,14 @@ func runMigrations(db *sql.DB) error {
 		"ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE",
 		"ALTER TABLE api_keys ADD COLUMN key_prefix TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE policies ADD COLUMN require_user_auth INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN scrub_pii INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN scrub_pii_request_body INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN scrub_pii_query_params INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN scrub_pii_headers INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN scrub_pii_email INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN scrub_pii_phone INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN scrub_pii_ssn INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE policies ADD COLUMN scrub_pii_credit_card INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE policies ADD COLUMN request_timeout_seconds INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE policies ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE policies ADD COLUMN basic_auth_username TEXT NOT NULL DEFAULT ''",
@@ -532,7 +548,7 @@ func (s *Store) HasSettings() bool {
 
 func (s *Store) ListPolicies() ([]Policy, error) {
 	rows, err := s.db.Query(`
-		SELECT name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds
+		SELECT name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, scrub_pii, scrub_pii_request_body, scrub_pii_query_params, scrub_pii_headers, scrub_pii_email, scrub_pii_phone, scrub_pii_ssn, scrub_pii_credit_card, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds
 		FROM policies
 		ORDER BY position, id
 	`)
@@ -546,6 +562,14 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 		var policy Policy
 		var requireAPIKey int
 		var requireUserAuth int
+		var scrubPII int
+		var scrubPIIRequestBody int
+		var scrubPIIQueryParams int
+		var scrubPIIHeaders int
+		var scrubPIIEmail int
+		var scrubPIIPhone int
+		var scrubPIISSN int
+		var scrubPIICreditCard int
 		var allowedMethods string
 		var addRequestHeaders string
 		var removeRequestHeaders string
@@ -562,6 +586,14 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 			&policy.RetryCount,
 			&requireAPIKey,
 			&requireUserAuth,
+			&scrubPII,
+			&scrubPIIRequestBody,
+			&scrubPIIQueryParams,
+			&scrubPIIHeaders,
+			&scrubPIIEmail,
+			&scrubPIIPhone,
+			&scrubPIISSN,
+			&scrubPIICreditCard,
 			&policy.RateLimitRequests,
 			&policy.RateLimitWindowSeconds,
 			&allowedMethods,
@@ -589,6 +621,14 @@ func (s *Store) ListPolicies() ([]Policy, error) {
 		}
 		policy.RequireAPIKey = requireAPIKey == 1
 		policy.RequireUserAuth = requireUserAuth == 1
+		policy.ScrubPII = scrubPII == 1
+		policy.ScrubPIIRequestBody = scrubPIIRequestBody == 1
+		policy.ScrubPIIQueryParams = scrubPIIQueryParams == 1
+		policy.ScrubPIIHeaders = scrubPIIHeaders == 1
+		policy.ScrubPIIEmail = scrubPIIEmail == 1
+		policy.ScrubPIIPhone = scrubPIIPhone == 1
+		policy.ScrubPIISSN = scrubPIISSN == 1
+		policy.ScrubPIICreditCard = scrubPIICreditCard == 1
 		policy.AllowedMethods = splitLines(allowedMethods)
 		policy.AddRequestHeaders = splitLines(addRequestHeaders)
 		policy.RemoveRequestHeaders = splitLines(removeRequestHeaders)
@@ -655,13 +695,21 @@ func (s *Store) AddPolicy(policy Policy) error {
 	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM policies").Scan(&maxPos)
 
 	_, err = tx.Exec(
-		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, scrub_pii, scrub_pii_request_body, scrub_pii_query_params, scrub_pii_headers, scrub_pii_email, scrub_pii_phone, scrub_pii_ssn, scrub_pii_credit_card, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		policy.Name,
 		policy.RequestTimeoutSeconds,
 		policy.RetryCount,
 		boolToInt(policy.RequireAPIKey),
 		boolToInt(policy.RequireUserAuth),
+		boolToInt(policy.ScrubPII),
+		boolToInt(policy.ScrubPIIRequestBody),
+		boolToInt(policy.ScrubPIIQueryParams),
+		boolToInt(policy.ScrubPIIHeaders),
+		boolToInt(policy.ScrubPIIEmail),
+		boolToInt(policy.ScrubPIIPhone),
+		boolToInt(policy.ScrubPIISSN),
+		boolToInt(policy.ScrubPIICreditCard),
 		policy.RateLimitRequests,
 		policy.RateLimitWindowSeconds,
 		joinLines(policy.AllowedMethods),
@@ -721,12 +769,20 @@ func (s *Store) UpdatePolicy(index int, policy Policy) error {
 	}
 
 	_, err = tx.Exec(
-		`UPDATE policies SET name = ?, request_timeout_seconds = ?, retry_count = ?, require_api_key = ?, require_user_auth = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, allowed_methods = ?, rewrite_path_prefix = ?, add_request_headers = ?, remove_request_headers = ?, max_payload_bytes = ?, request_transform_find = ?, request_transform_replace = ?, cache_ttl_seconds = ?, add_response_headers = ?, remove_response_headers = ?, response_transform_find = ?, response_transform_replace = ?, max_response_bytes = ?, cors_allow_origins = ?, cors_allow_methods = ?, cors_allow_headers = ?, ip_allow_list = ?, ip_block_list = ?, circuit_breaker_failures = ?, circuit_breaker_reset_seconds = ? WHERE id = ?`,
+		`UPDATE policies SET name = ?, request_timeout_seconds = ?, retry_count = ?, require_api_key = ?, require_user_auth = ?, scrub_pii = ?, scrub_pii_request_body = ?, scrub_pii_query_params = ?, scrub_pii_headers = ?, scrub_pii_email = ?, scrub_pii_phone = ?, scrub_pii_ssn = ?, scrub_pii_credit_card = ?, rate_limit_requests = ?, rate_limit_window_seconds = ?, allowed_methods = ?, rewrite_path_prefix = ?, add_request_headers = ?, remove_request_headers = ?, max_payload_bytes = ?, request_transform_find = ?, request_transform_replace = ?, cache_ttl_seconds = ?, add_response_headers = ?, remove_response_headers = ?, response_transform_find = ?, response_transform_replace = ?, max_response_bytes = ?, cors_allow_origins = ?, cors_allow_methods = ?, cors_allow_headers = ?, ip_allow_list = ?, ip_block_list = ?, circuit_breaker_failures = ?, circuit_breaker_reset_seconds = ? WHERE id = ?`,
 		policy.Name,
 		policy.RequestTimeoutSeconds,
 		policy.RetryCount,
 		boolToInt(policy.RequireAPIKey),
 		boolToInt(policy.RequireUserAuth),
+		boolToInt(policy.ScrubPII),
+		boolToInt(policy.ScrubPIIRequestBody),
+		boolToInt(policy.ScrubPIIQueryParams),
+		boolToInt(policy.ScrubPIIHeaders),
+		boolToInt(policy.ScrubPIIEmail),
+		boolToInt(policy.ScrubPIIPhone),
+		boolToInt(policy.ScrubPIISSN),
+		boolToInt(policy.ScrubPIICreditCard),
 		policy.RateLimitRequests,
 		policy.RateLimitWindowSeconds,
 		joinLines(policy.AllowedMethods),

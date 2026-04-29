@@ -118,6 +118,14 @@ func policyFromForm(r *http.Request) (Policy, error) {
 		RetryCount:                 retryCount,
 		RequireAPIKey:              r.FormValue("policy_require_api_key") == "true",
 		RequireUserAuth:            r.FormValue("policy_require_user_auth") == "true",
+		ScrubPII:                   false,
+		ScrubPIIRequestBody:        false,
+		ScrubPIIQueryParams:        false,
+		ScrubPIIHeaders:            r.FormValue("policy_scrub_pii_headers") == "true",
+		ScrubPIIEmail:              r.FormValue("policy_scrub_pii_email") == "true",
+		ScrubPIIPhone:              r.FormValue("policy_scrub_pii_phone") == "true",
+		ScrubPIISSN:                r.FormValue("policy_scrub_pii_ssn") == "true",
+		ScrubPIICreditCard:         r.FormValue("policy_scrub_pii_credit_card") == "true",
 		RateLimitRequests:          rateLimitRequests,
 		RateLimitWindowSeconds:     rateLimitWindowSeconds,
 		AllowedMethods:             splitLines(strings.ToUpper(r.FormValue("policy_allowed_methods"))),
@@ -141,9 +149,18 @@ func policyFromForm(r *http.Request) (Policy, error) {
 		CircuitBreakerFailures:     circuitBreakerFailures,
 		CircuitBreakerResetSeconds: circuitBreakerResetSeconds,
 	}
+	hasPIITypes := policy.ScrubPIIEmail || policy.ScrubPIIPhone || policy.ScrubPIISSN || policy.ScrubPIICreditCard
+	policy.ScrubPIIRequestBody = hasPIITypes
+	policy.ScrubPIIQueryParams = hasPIITypes
+	policy.ScrubPII = hasPIITypes || policy.ScrubPIIHeaders
 
 	if policy.Name == "" {
 		return Policy{}, errors.New("policy name is required")
+	}
+	if policy.ScrubPII {
+		if !policy.ScrubPIIEmail && !policy.ScrubPIIPhone && !policy.ScrubPIISSN && !policy.ScrubPIICreditCard && !policy.ScrubPIIHeaders {
+			return Policy{}, errors.New("pii scrubber needs at least one pii type or header scrub")
+		}
 	}
 	if policy.RateLimitRequests > 0 && policy.RateLimitWindowSeconds <= 0 {
 		return Policy{}, errors.New("rate limit window seconds is required")

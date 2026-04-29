@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"sort"
@@ -56,6 +57,57 @@ type routeStat struct {
 
 type loginPageData struct {
 	Error string
+}
+
+func policyButtonAttrs(index int, policy Policy) template.HTMLAttr {
+	quote := func(value string) string {
+		return fmt.Sprintf("%q", template.HTMLEscapeString(value))
+	}
+	boolString := func(value bool) string {
+		if value {
+			return "true"
+		}
+		return "false"
+	}
+	attrs := []string{
+		"data-policy-index=" + quote(strconv.Itoa(index)),
+		"data-policy-name=" + quote(policy.Name),
+		"data-policy-request-timeout-seconds=" + quote(strconv.Itoa(policy.RequestTimeoutSeconds)),
+		"data-policy-retry-count=" + quote(strconv.Itoa(policy.RetryCount)),
+		"data-policy-require-api-key=" + quote(boolString(policy.RequireAPIKey)),
+		"data-policy-require-user-auth=" + quote(boolString(policy.RequireUserAuth)),
+		"data-policy-scrub-pii=" + quote(boolString(policy.ScrubPII)),
+		"data-policy-scrub-pii-request-body=" + quote(boolString(policy.ScrubPIIRequestBody)),
+		"data-policy-scrub-pii-query-params=" + quote(boolString(policy.ScrubPIIQueryParams)),
+		"data-policy-scrub-pii-headers=" + quote(boolString(policy.ScrubPIIHeaders)),
+		"data-policy-scrub-pii-email=" + quote(boolString(policy.ScrubPIIEmail)),
+		"data-policy-scrub-pii-phone=" + quote(boolString(policy.ScrubPIIPhone)),
+		"data-policy-scrub-pii-ssn=" + quote(boolString(policy.ScrubPIISSN)),
+		"data-policy-scrub-pii-credit-card=" + quote(boolString(policy.ScrubPIICreditCard)),
+		"data-policy-rate-limit-requests=" + quote(strconv.Itoa(policy.RateLimitRequests)),
+		"data-policy-rate-limit-window-seconds=" + quote(strconv.Itoa(policy.RateLimitWindowSeconds)),
+		"data-policy-allowed-methods=" + quote(joinLines(policy.AllowedMethods)),
+		"data-policy-rewrite-path-prefix=" + quote(policy.RewritePathPrefix),
+		"data-policy-add-request-headers=" + quote(joinLines(policy.AddRequestHeaders)),
+		"data-policy-remove-request-headers=" + quote(joinLines(policy.RemoveRequestHeaders)),
+		"data-policy-max-payload-bytes=" + quote(strconv.FormatInt(policy.MaxPayloadBytes, 10)),
+		"data-policy-request-transform-find=" + quote(policy.RequestTransformFind),
+		"data-policy-request-transform-replace=" + quote(policy.RequestTransformReplace),
+		"data-policy-cache-ttl-seconds=" + quote(strconv.Itoa(policy.CacheTTLSeconds)),
+		"data-policy-add-response-headers=" + quote(joinLines(policy.AddResponseHeaders)),
+		"data-policy-remove-response-headers=" + quote(joinLines(policy.RemoveResponseHeaders)),
+		"data-policy-response-transform-find=" + quote(policy.ResponseTransformFind),
+		"data-policy-response-transform-replace=" + quote(policy.ResponseTransformReplace),
+		"data-policy-max-response-bytes=" + quote(strconv.FormatInt(policy.MaxResponseBytes, 10)),
+		"data-policy-cors-allow-origins=" + quote(joinLines(policy.CORSAllowOrigins)),
+		"data-policy-cors-allow-methods=" + quote(joinLines(policy.CORSAllowMethods)),
+		"data-policy-cors-allow-headers=" + quote(joinLines(policy.CORSAllowHeaders)),
+		"data-policy-ip-allow-list=" + quote(joinLines(policy.IPAllowList)),
+		"data-policy-ip-block-list=" + quote(joinLines(policy.IPBlockList)),
+		"data-policy-circuit-breaker-failures=" + quote(strconv.Itoa(policy.CircuitBreakerFailures)),
+		"data-policy-circuit-breaker-reset-seconds=" + quote(strconv.Itoa(policy.CircuitBreakerResetSeconds)),
+	}
+	return template.HTMLAttr(strings.Join(attrs, " "))
 }
 
 func (g *Gateway) adminHandler() http.Handler {

@@ -254,6 +254,90 @@ func TestPolicyRequestTransform(t *testing.T) {
 	}
 }
 
+func TestPolicyPIIScrubber(t *testing.T) {
+	var receivedQuery string
+	var receivedBody string
+	var receivedAuth string
+	var receivedAPIKey string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedQuery = r.URL.RawQuery
+		receivedAuth = r.Header.Get("Authorization")
+		receivedAPIKey = r.Header.Get("X-API-Key")
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = string(body)
+		w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	policy := Policy{
+		Name:                "scrub",
+		RequireAPIKey:       true,
+		ScrubPII:            true,
+		ScrubPIIRequestBody: true,
+		ScrubPIIQueryParams: true,
+		ScrubPIIHeaders:     true,
+		ScrubPIIEmail:       true,
+		ScrubPIIPhone:       true,
+		ScrubPIICreditCard:  true,
+	}
+	config := Config{
+		Admin:    AdminConfig{Username: "admin", Password: "admin"},
+		LogLimit: 10,
+		Policies: []Policy{policy},
+		Routes: []Route{{
+			Name:       "test",
+			PathPrefix: "/test",
+			Target:     upstream.URL,
+			PolicyName: policy.Name,
+		}},
+	}
+
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	user, err := store.CreateUser("user", "pass", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateAPIKey(user.ID, "good-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	gw, err := newGateway(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(gw.Close)
+	server := httptest.NewServer(gw.gatewayHandler())
+	defer server.Close()
+
+	req, _ := http.NewRequest("POST", server.URL+"/test?email=person@example.com&phone=555-123-4567", strings.NewReader(`{"card":"4111 1111 1111 1111","note":"call me at 555-123-4567"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("X-API-Key", "good-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if strings.Contains(receivedQuery, "person@example.com") || strings.Contains(receivedQuery, "555-123-4567") {
+		t.Fatalf("expected scrubbed query, got %q", receivedQuery)
+	}
+	if strings.Contains(receivedBody, "4111 1111 1111 1111") || strings.Contains(receivedBody, "555-123-4567") {
+		t.Fatalf("expected scrubbed body, got %q", receivedBody)
+	}
+	if receivedAuth != "" {
+		t.Fatalf("expected authorization header removed, got %q", receivedAuth)
+	}
+	if receivedAPIKey != "" {
+		t.Fatalf("expected api key header removed, got %q", receivedAPIKey)
+	}
+}
+
 func TestPolicyResponseTransform(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("hello world"))

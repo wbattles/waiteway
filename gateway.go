@@ -52,11 +52,12 @@ type statusRecorder struct {
 
 func newGateway(store *Store, config Config) (*Gateway, error) {
 	tmpl, err := template.New("admin").Funcs(template.FuncMap{
-		"formatDurationMS": formatDurationMS,
-		"formatClientIP":   formatClientIP,
-		"formatPercent":    formatPercent,
-		"routePolicyLabel": routePolicyLabel,
-		"policySummary":    policySummary,
+		"formatDurationMS":  formatDurationMS,
+		"formatClientIP":    formatClientIP,
+		"formatPercent":     formatPercent,
+		"routePolicyLabel":  routePolicyLabel,
+		"policySummary":     policySummary,
+		"policyButtonAttrs": policyButtonAttrs,
 	}).Parse(adminTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("parse admin template: %w", err)

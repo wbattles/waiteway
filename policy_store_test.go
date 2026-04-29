@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -61,6 +63,61 @@ func TestStoreUpdatePolicyAllowsSameNameOnSamePolicy(t *testing.T) {
 
 	if err := store.UpdatePolicy(0, Policy{Name: "first", RetryCount: 3}); err != nil {
 		t.Fatalf("updating policy without changing its name should succeed, got %v", err)
+	}
+}
+
+func TestPolicyFromFormEnablesPIIScrubberFromTypeSelections(t *testing.T) {
+	form := url.Values{
+		"policy_name":                  {"pii"},
+		"policy_scrub_pii_email":       {"true"},
+		"policy_scrub_pii_headers":     {"true"},
+		"policy_scrub_pii_credit_card": {"true"},
+	}
+	req := httptest.NewRequest("POST", "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	policy, err := policyFromForm(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.ScrubPII || !policy.ScrubPIIEmail || !policy.ScrubPIICreditCard || !policy.ScrubPIIHeaders {
+		t.Fatalf("expected pii scrubber selections to be saved, got %#v", policy)
+	}
+	if !policy.ScrubPIIRequestBody || !policy.ScrubPIIQueryParams {
+		t.Fatalf("expected pii type selections to enable request body and query scrubbing, got %#v", policy)
+	}
+}
+
+func TestStorePersistsPIIScrubberFields(t *testing.T) {
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	policy := Policy{
+		Name:                "pii",
+		ScrubPII:            true,
+		ScrubPIIRequestBody: true,
+		ScrubPIIQueryParams: true,
+		ScrubPIIHeaders:     true,
+		ScrubPIIEmail:       true,
+		ScrubPIIPhone:       true,
+	}
+	if err := store.AddPolicy(policy); err != nil {
+		t.Fatal(err)
+	}
+
+	policies, err := store.ListPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policies) != 1 {
+		t.Fatalf("expected 1 policy, got %d", len(policies))
+	}
+	got := policies[0]
+	if !got.ScrubPII || !got.ScrubPIIRequestBody || !got.ScrubPIIQueryParams || !got.ScrubPIIHeaders || !got.ScrubPIIEmail || !got.ScrubPIIPhone {
+		t.Fatalf("expected persisted pii scrubber fields, got %#v", got)
 	}
 }
 
