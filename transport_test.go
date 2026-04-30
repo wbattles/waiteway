@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -32,7 +35,7 @@ func TestTLSConfigFromEnvironmentLoadsExtraCert(t *testing.T) {
 	resetTransportState()
 
 	dir := t.TempDir()
-	certPath := filepath.Join(dir, "corp-root.pem")
+	certPath := filepath.Join(dir, "root.pem")
 	if err := os.WriteFile(certPath, []byte(testRootCert), 0o600); err != nil {
 		t.Fatalf("write cert: %v", err)
 	}
@@ -46,8 +49,15 @@ func TestTLSConfigFromEnvironmentLoadsExtraCert(t *testing.T) {
 	if tlsConfig == nil || tlsConfig.RootCAs == nil {
 		t.Fatal("expected root CAs to be loaded")
 	}
-	if subjects := tlsConfig.RootCAs.Subjects(); len(subjects) == 0 {
-		t.Fatal("expected at least one trusted root certificate")
+
+	// Verify our specific cert is in the pool. The test cert is a self-signed
+	// root, so it should successfully verify against a pool containing itself.
+	cert := mustParseCert(t, testRootCert)
+	if _, err := cert.Verify(x509.VerifyOptions{
+		Roots:       tlsConfig.RootCAs,
+		CurrentTime: cert.NotBefore,
+	}); err != nil {
+		t.Fatalf("test cert was not added to the pool: %v", err)
 	}
 }
 
@@ -65,6 +75,36 @@ func TestTLSConfigFromEnvironmentRejectsBadCert(t *testing.T) {
 	if _, err := tlsConfigFromEnvironment(); err == nil {
 		t.Fatal("expected bad certificate file to fail")
 	}
+}
+
+func TestTLSConfigFromEnvironmentRejectsDeprecatedVars(t *testing.T) {
+	for _, name := range []string{"WAITEWAY_CA_CERT_FILE", "WAITEWAY_CA_CERT_DIR"} {
+		t.Run(name, func(t *testing.T) {
+			resetTransportState()
+			t.Setenv(name, "/some/path")
+
+			_, err := tlsConfigFromEnvironment()
+			if err == nil {
+				t.Fatalf("expected error when %s is set", name)
+			}
+			if !strings.Contains(err.Error(), "WAITEWAY_CA_CERT") {
+				t.Fatalf("error should mention the new variable, got: %v", err)
+			}
+		})
+	}
+}
+
+func mustParseCert(t *testing.T, pemData string) *x509.Certificate {
+	t.Helper()
+	block, _ := pem.Decode([]byte(pemData))
+	if block == nil {
+		t.Fatal("failed to decode test cert PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse test cert: %v", err)
+	}
+	return cert
 }
 
 func resetTransportState() {

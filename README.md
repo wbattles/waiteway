@@ -109,8 +109,6 @@ Change admin username, password, and log limit.
 
 ## Environment variables
 
-Read on first run only. After that, use the admin portal.
-
 | variable | default | description |
 |---|---|---|
 | `WAITEWAY_ADMIN_USERNAME` | `admin` | admin username |
