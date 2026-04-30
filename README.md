@@ -117,11 +117,19 @@ Read on first run only. After that, use the admin portal.
 | `WAITEWAY_ADMIN_PASSWORD` | `change-me` | admin password |
 | `WAITEWAY_LISTEN` | `:8080` | gateway listen address |
 | `WAITEWAY_ADMIN_LISTEN` | `:9090` | admin listen address |
-| `WAITEWAY_CA_CERTS` | unset | path to a PEM file with extra root certs (see [Corporate certificates](#corporate-certificates)) |
+| `WAITEWAY_CA_CERT` | unset | path to a PEM file with extra root certs (see [Private certificates](#private-certificates)) |
 
-## Corporate certificates
+## Private certificates
 
-If your network re-signs HTTPS traffic (Zscaler, Netskope, etc.), the container won't trust the upstream cert by default. Mount the corporate root cert and point Waiteway at it.
+For upstreams using private CAs, self-signed certs, or networks that re-sign HTTPS traffic (Zscaler, Netskope, homelab, internal services). Point `WAITEWAY_CA_CERT` at a PEM file with the root cert(s).
+
+Your cert is added to the system trust store. Public sites keep working.
+
+### Local
+
+```bash
+WAITEWAY_CA_CERT=./root.pem go run .
+```
 
 ### Docker
 
@@ -129,30 +137,36 @@ If your network re-signs HTTPS traffic (Zscaler, Netskope, etc.), the container 
 docker run \
   -p 8080:8080 -p 9090:9090 \
   -v ./data:/data \
-  -v ./corp-root.pem:/certs/corp-root.pem:ro \
-  -e WAITEWAY_CA_CERTS=/certs/corp-root.pem \
+  -v ./root.pem:/certs/root.pem:ro \
+  -e WAITEWAY_CA_CERT=/certs/root.pem \
   waiteway
 ```
 
 ### Kubernetes
 
-Put the cert in a ConfigMap, then use the chart's `extraVolumes`, `extraVolumeMounts`, and `extraEnv`:
+Put the cert in a ConfigMap, then set `extraVolumes`, `extraVolumeMounts`, and `extraEnv`:
 
 ```yaml
 extraVolumes:
-  - name: corp-ca
+  - name: ca
     configMap:
-      name: corp-ca-bundle
+      name: ca-bundle
 extraVolumeMounts:
-  - name: corp-ca
+  - name: ca
     mountPath: /certs
     readOnly: true
 extraEnv:
-  - name: WAITEWAY_CA_CERTS
-    value: /certs/corp-root.pem
+  - name: WAITEWAY_CA_CERT
+    value: /certs/root.pem
 ```
 
-Your cert is always added to the system trust store, never replacing it. Public sites stay reachable.
+### Multiple certs
+
+PEM files can hold multiple certs. Concatenate them into one bundle:
+
+```bash
+cat root.pem intermediate.pem > bundle.pem
+```
 
 ## Architecture
 

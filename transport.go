@@ -20,8 +20,6 @@ var (
 )
 
 // systemCertBundlePaths lists well-known OS trust store locations.
-// Read directly so public roots are always loaded, even if Go's
-// SystemCertPool comes back empty.
 var systemCertBundlePaths = []string{
 	"/etc/ssl/certs/ca-certificates.crt", // Alpine, Debian, Ubuntu
 	"/etc/ssl/cert.pem",                  // Alpine fallback, BSD, macOS
@@ -85,15 +83,13 @@ func newTunedTransport() (*http.Transport, error) {
 		// Pass upstream response bodies through as-is.
 		DisableCompression: true,
 
-		// Trust system roots plus any extra cert from WAITEWAY_CA_CERTS.
+		// Trust system roots plus any extra cert from WAITEWAY_CA_CERT.
 		TLSClientConfig: tlsConfig,
 	}, nil
 }
 
-// tlsConfigFromEnvironment builds a TLS config that trusts the system
-// roots plus an optional extra CA cert from WAITEWAY_CA_CERTS.
 func tlsConfigFromEnvironment() (*tls.Config, error) {
-	path := strings.TrimSpace(os.Getenv("WAITEWAY_CA_CERTS"))
+	path := strings.TrimSpace(os.Getenv("WAITEWAY_CA_CERT"))
 	if path == "" {
 		return nil, nil
 	}
@@ -110,10 +106,10 @@ func tlsConfigFromEnvironment() (*tls.Config, error) {
 
 	pem, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read WAITEWAY_CA_CERTS %q: %w", path, err)
+		return nil, fmt.Errorf("read WAITEWAY_CA_CERT %q: %w", path, err)
 	}
 	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("parse WAITEWAY_CA_CERTS %q: no PEM certificates found", path)
+		return nil, fmt.Errorf("parse WAITEWAY_CA_CERT %q: no PEM certificates found", path)
 	}
 
 	return &tls.Config{RootCAs: pool}, nil

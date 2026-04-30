@@ -37,7 +37,7 @@ func TestTLSConfigFromEnvironmentLoadsExtraCert(t *testing.T) {
 		t.Fatalf("write cert: %v", err)
 	}
 
-	t.Setenv("WAITEWAY_CA_CERTS", certPath)
+	t.Setenv("WAITEWAY_CA_CERT", certPath)
 
 	tlsConfig, err := tlsConfigFromEnvironment()
 	if err != nil {
@@ -60,7 +60,7 @@ func TestTLSConfigFromEnvironmentRejectsBadCert(t *testing.T) {
 		t.Fatalf("write cert: %v", err)
 	}
 
-	t.Setenv("WAITEWAY_CA_CERTS", certPath)
+	t.Setenv("WAITEWAY_CA_CERT", certPath)
 
 	if _, err := tlsConfigFromEnvironment(); err == nil {
 		t.Fatal("expected bad certificate file to fail")
