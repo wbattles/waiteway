@@ -28,17 +28,16 @@ TAZ8f4U1owo2Mj1bm1qh/wsWWQ==
 -----END CERTIFICATE-----
 `
 
-func TestTLSConfigFromEnvironmentLoadsCertFile(t *testing.T) {
+func TestTLSConfigFromEnvironmentLoadsExtraCert(t *testing.T) {
 	resetTransportState()
 
 	dir := t.TempDir()
-	certPath := filepath.Join(dir, "zscaler-root.pem")
+	certPath := filepath.Join(dir, "corp-root.pem")
 	if err := os.WriteFile(certPath, []byte(testRootCert), 0o600); err != nil {
 		t.Fatalf("write cert: %v", err)
 	}
 
-	t.Setenv("WAITEWAY_CA_CERT_FILE", certPath)
-	t.Setenv("WAITEWAY_CA_CERT_DIR", "")
+	t.Setenv("WAITEWAY_CA_CERTS", certPath)
 
 	tlsConfig, err := tlsConfigFromEnvironment()
 	if err != nil {
@@ -47,37 +46,12 @@ func TestTLSConfigFromEnvironmentLoadsCertFile(t *testing.T) {
 	if tlsConfig == nil || tlsConfig.RootCAs == nil {
 		t.Fatal("expected root CAs to be loaded")
 	}
-
 	if subjects := tlsConfig.RootCAs.Subjects(); len(subjects) == 0 {
 		t.Fatal("expected at least one trusted root certificate")
 	}
 }
 
-func TestTLSConfigFromEnvironmentLoadsCertDirectory(t *testing.T) {
-	resetTransportState()
-
-	dir := t.TempDir()
-	certPath := filepath.Join(dir, "zscaler-root.crt")
-	if err := os.WriteFile(certPath, []byte(testRootCert), 0o600); err != nil {
-		t.Fatalf("write cert: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore me"), 0o600); err != nil {
-		t.Fatalf("write extra file: %v", err)
-	}
-
-	t.Setenv("WAITEWAY_CA_CERT_FILE", "")
-	t.Setenv("WAITEWAY_CA_CERT_DIR", dir)
-
-	tlsConfig, err := tlsConfigFromEnvironment()
-	if err != nil {
-		t.Fatalf("tlsConfigFromEnvironment returned error: %v", err)
-	}
-	if tlsConfig == nil || tlsConfig.RootCAs == nil {
-		t.Fatal("expected root CAs to be loaded")
-	}
-}
-
-func TestTLSConfigFromEnvironmentRejectsBadCertFile(t *testing.T) {
+func TestTLSConfigFromEnvironmentRejectsBadCert(t *testing.T) {
 	resetTransportState()
 
 	dir := t.TempDir()
@@ -86,8 +60,7 @@ func TestTLSConfigFromEnvironmentRejectsBadCertFile(t *testing.T) {
 		t.Fatalf("write cert: %v", err)
 	}
 
-	t.Setenv("WAITEWAY_CA_CERT_FILE", certPath)
-	t.Setenv("WAITEWAY_CA_CERT_DIR", "")
+	t.Setenv("WAITEWAY_CA_CERTS", certPath)
 
 	if _, err := tlsConfigFromEnvironment(); err == nil {
 		t.Fatal("expected bad certificate file to fail")

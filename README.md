@@ -117,8 +117,7 @@ Read on first run only. After that, use the admin portal.
 | `WAITEWAY_ADMIN_PASSWORD` | `change-me` | admin password |
 | `WAITEWAY_LISTEN` | `:8080` | gateway listen address |
 | `WAITEWAY_ADMIN_LISTEN` | `:9090` | admin listen address |
-| `WAITEWAY_CA_CERT_FILE` | unset | path to one PEM file with extra root certs (see [Corporate certificates](#corporate-certificates)) |
-| `WAITEWAY_CA_CERT_DIR` | unset | directory of extra root cert files — `.pem`, `.crt`, or `.cer` (see [Corporate certificates](#corporate-certificates)) |
+| `WAITEWAY_CA_CERTS` | unset | path to a PEM file with extra root certs (see [Corporate certificates](#corporate-certificates)) |
 
 ## Corporate certificates
 
@@ -131,7 +130,7 @@ docker run \
   -p 8080:8080 -p 9090:9090 \
   -v ./data:/data \
   -v ./corp-root.pem:/certs/corp-root.pem:ro \
-  -e WAITEWAY_CA_CERT_FILE=/certs/corp-root.pem \
+  -e WAITEWAY_CA_CERTS=/certs/corp-root.pem \
   waiteway
 ```
 
@@ -146,14 +145,14 @@ extraVolumes:
       name: corp-ca-bundle
 extraVolumeMounts:
   - name: corp-ca
-    mountPath: /etc/waiteway/ca
+    mountPath: /certs
     readOnly: true
 extraEnv:
-  - name: WAITEWAY_CA_CERT_DIR
-    value: /etc/waiteway/ca
+  - name: WAITEWAY_CA_CERTS
+    value: /certs/corp-root.pem
 ```
 
-When the system trust store is available, these certs are appended to it. If the system pool can't be loaded, only the provided certs are used.
+Your cert is always added to the system trust store, never replacing it. Public sites stay reachable.
 
 ## Architecture
 
