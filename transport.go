@@ -94,6 +94,10 @@ func tlsConfigFromEnvironment() (*tls.Config, error) {
 		return nil, nil
 	}
 
+	// Always read the OS bundle files even when SystemCertPool succeeds.
+	// SystemCertPool can return non-nil but missing the roots we expect,
+	// which would silently strip public CAs once we append the user cert.
+	// Duplicate certs in the pool are harmless.
 	pool, err := x509.SystemCertPool()
 	if err != nil || pool == nil {
 		pool = x509.NewCertPool()

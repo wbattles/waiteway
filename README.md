@@ -123,7 +123,7 @@ Read on first run only. After that, use the admin portal.
 
 For upstreams using private CAs, self-signed certs, or networks that re-sign HTTPS traffic (Zscaler, Netskope, homelab, internal services). Point `WAITEWAY_CA_CERT` at a PEM file with the root cert(s).
 
-Your cert is added to the system trust store. Public sites keep working.
+Your cert is added alongside system roots, not in place of them. Public sites keep working.
 
 ### Local
 
