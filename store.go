@@ -21,52 +21,47 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS policies (
-	id                       INTEGER PRIMARY KEY AUTOINCREMENT,
-	name                     TEXT NOT NULL UNIQUE,
-	request_timeout_seconds  INTEGER NOT NULL DEFAULT 0,
-	retry_count              INTEGER NOT NULL DEFAULT 0,
-	require_api_key          INTEGER NOT NULL DEFAULT 0,
-	require_user_auth        INTEGER NOT NULL DEFAULT 0,
-	rate_limit_requests      INTEGER NOT NULL DEFAULT 0,
-	rate_limit_window_seconds INTEGER NOT NULL DEFAULT 0,
-	allowed_methods          TEXT NOT NULL DEFAULT '',
-	rewrite_path_prefix      TEXT NOT NULL DEFAULT '',
-	add_request_headers      TEXT NOT NULL DEFAULT '',
-	remove_request_headers   TEXT NOT NULL DEFAULT '',
-	max_payload_bytes        INTEGER NOT NULL DEFAULT 0,
-	request_transform_find   TEXT NOT NULL DEFAULT '',
-	request_transform_replace TEXT NOT NULL DEFAULT '',
-	cache_ttl_seconds        INTEGER NOT NULL DEFAULT 0,
-	add_response_headers     TEXT NOT NULL DEFAULT '',
-	remove_response_headers  TEXT NOT NULL DEFAULT '',
-	response_transform_find  TEXT NOT NULL DEFAULT '',
-	response_transform_replace TEXT NOT NULL DEFAULT '',
-	max_response_bytes       INTEGER NOT NULL DEFAULT 0,
-	cors_allow_origins       TEXT NOT NULL DEFAULT '',
-	cors_allow_methods       TEXT NOT NULL DEFAULT '',
-	cors_allow_headers       TEXT NOT NULL DEFAULT '',
-	ip_allow_list            TEXT NOT NULL DEFAULT '',
-	ip_block_list            TEXT NOT NULL DEFAULT '',
-	circuit_breaker_failures INTEGER NOT NULL DEFAULT 0,
+	id                            INTEGER PRIMARY KEY AUTOINCREMENT,
+	name                          TEXT NOT NULL UNIQUE,
+	request_timeout_seconds       INTEGER NOT NULL DEFAULT 0,
+	retry_count                   INTEGER NOT NULL DEFAULT 0,
+	require_api_key               INTEGER NOT NULL DEFAULT 0,
+	require_user_auth             INTEGER NOT NULL DEFAULT 0,
+	basic_auth_username           TEXT NOT NULL DEFAULT '',
+	basic_auth_password           TEXT NOT NULL DEFAULT '',
+	rate_limit_requests           INTEGER NOT NULL DEFAULT 0,
+	rate_limit_window_seconds     INTEGER NOT NULL DEFAULT 0,
+	allowed_methods               TEXT NOT NULL DEFAULT '',
+	rewrite_path_prefix           TEXT NOT NULL DEFAULT '',
+	add_request_headers           TEXT NOT NULL DEFAULT '',
+	remove_request_headers        TEXT NOT NULL DEFAULT '',
+	max_payload_bytes             INTEGER NOT NULL DEFAULT 0,
+	request_transform_find        TEXT NOT NULL DEFAULT '',
+	request_transform_replace     TEXT NOT NULL DEFAULT '',
+	cache_ttl_seconds             INTEGER NOT NULL DEFAULT 0,
+	add_response_headers          TEXT NOT NULL DEFAULT '',
+	remove_response_headers       TEXT NOT NULL DEFAULT '',
+	response_transform_find       TEXT NOT NULL DEFAULT '',
+	response_transform_replace    TEXT NOT NULL DEFAULT '',
+	max_response_bytes            INTEGER NOT NULL DEFAULT 0,
+	cors_allow_origins            TEXT NOT NULL DEFAULT '',
+	cors_allow_methods            TEXT NOT NULL DEFAULT '',
+	cors_allow_headers            TEXT NOT NULL DEFAULT '',
+	ip_allow_list                 TEXT NOT NULL DEFAULT '',
+	ip_block_list                 TEXT NOT NULL DEFAULT '',
+	circuit_breaker_failures      INTEGER NOT NULL DEFAULT 0,
 	circuit_breaker_reset_seconds INTEGER NOT NULL DEFAULT 0,
-	position                 INTEGER NOT NULL DEFAULT 0
+	position                      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS routes (
-	id              INTEGER PRIMARY KEY AUTOINCREMENT,
-	name            TEXT NOT NULL,
-	path_prefix     TEXT NOT NULL,
-	target          TEXT NOT NULL,
-	policy_name     TEXT NOT NULL DEFAULT '',
-	require_api_key INTEGER NOT NULL DEFAULT 0,
-	strip_prefix    INTEGER NOT NULL DEFAULT 0,
-	position        INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS route_api_keys (
-	id       INTEGER PRIMARY KEY AUTOINCREMENT,
-	route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
-	key      TEXT NOT NULL
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	name         TEXT NOT NULL,
+	path_prefix  TEXT NOT NULL,
+	target       TEXT NOT NULL,
+	policy_name  TEXT NOT NULL DEFAULT '',
+	strip_prefix INTEGER NOT NULL DEFAULT 0,
+	position     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS request_logs (
@@ -86,13 +81,13 @@ CREATE TABLE IF NOT EXISTS users (
 	password_hash TEXT NOT NULL,
 	is_admin      INTEGER NOT NULL DEFAULT 0,
 	created_at    TEXT NOT NULL
-	);
+);
 
 CREATE TABLE IF NOT EXISTS sessions (
 	id         TEXT PRIMARY KEY,
 	created_at TEXT NOT NULL,
 	user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE
-	);
+);
 
 CREATE TABLE IF NOT EXISTS api_keys (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,7 +95,12 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	key_prefix TEXT NOT NULL DEFAULT '',
 	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	created_at TEXT NOT NULL
-	);
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_path_prefix ON routes(path_prefix);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key);
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
 `
 
 func openStore(dbPath string) (*Store, error) {
@@ -114,60 +114,7 @@ func openStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
-	if err := runMigrations(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate schema: %w", err)
-	}
-
 	return &Store{db: db}, nil
-}
-
-func runMigrations(db *sql.DB) error {
-	columns := []string{
-		"ALTER TABLE routes ADD COLUMN policy_name TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE",
-		"ALTER TABLE api_keys ADD COLUMN key_prefix TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN require_user_auth INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE policies ADD COLUMN request_timeout_seconds INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE policies ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE policies ADD COLUMN basic_auth_username TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN basic_auth_password TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN allowed_methods TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN rewrite_path_prefix TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN add_request_headers TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN remove_request_headers TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN request_transform_find TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN request_transform_replace TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN add_response_headers TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN remove_response_headers TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN response_transform_find TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN response_transform_replace TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN max_response_bytes INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE policies ADD COLUMN cors_allow_origins TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN cors_allow_methods TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN cors_allow_headers TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE policies ADD COLUMN circuit_breaker_failures INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE policies ADD COLUMN circuit_breaker_reset_seconds INTEGER NOT NULL DEFAULT 0",
-	}
-	for _, stmt := range columns {
-		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			return err
-		}
-	}
-
-	indexes := []string{
-		"CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_path_prefix ON routes(path_prefix)",
-		"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)",
-		"CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key)",
-		"CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)",
-	}
-	for _, stmt := range indexes {
-		if _, err := db.Exec(stmt); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func (s *Store) Close() error {
@@ -196,10 +143,6 @@ func (s *Store) SetSetting(key, value string) error {
 func (s *Store) LoadConfig() (Config, error) {
 	config := Config{
 		LogLimit: 100,
-		Admin: AdminConfig{
-			Username: s.GetSetting("admin_username", "admin"),
-			Password: s.GetSetting("admin_password", "change-me"),
-		},
 		LoadBalancer: LoadBalancerConfig{
 			Mode:           s.GetSetting("load_balancer_mode", "direct"),
 			ClientIPHeader: s.GetSetting("load_balancer_client_ip_header", ""),
@@ -234,8 +177,6 @@ func (s *Store) SaveSettings(config Config) error {
 	defer tx.Rollback()
 
 	for _, kv := range [][2]string{
-		{"admin_username", config.Admin.Username},
-		{"admin_password", config.Admin.Password},
 		{"log_limit", fmt.Sprintf("%d", config.LogLimit)},
 		{"load_balancer_mode", config.LoadBalancer.Mode},
 		{"load_balancer_client_ip_header", config.LoadBalancer.ClientIPHeader},
@@ -255,28 +196,21 @@ func (s *Store) SaveSettings(config Config) error {
 // --- routes ---
 
 func (s *Store) ListRoutes() ([]Route, error) {
-	rows, err := s.db.Query("SELECT id, name, path_prefix, target, policy_name, require_api_key, strip_prefix FROM routes ORDER BY position, id")
+	rows, err := s.db.Query("SELECT id, name, path_prefix, target, policy_name, strip_prefix FROM routes ORDER BY position, id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	keysByRouteID, err := s.listAllRouteAPIKeys()
-	if err != nil {
-		return nil, err
-	}
-
 	var routes []Route
 	for rows.Next() {
 		var r Route
 		var id int
-		var reqKey, strip int
-		if err := rows.Scan(&id, &r.Name, &r.PathPrefix, &r.Target, &r.PolicyName, &reqKey, &strip); err != nil {
+		var strip int
+		if err := rows.Scan(&id, &r.Name, &r.PathPrefix, &r.Target, &r.PolicyName, &strip); err != nil {
 			return nil, err
 		}
-		r.RequireAPIKey = reqKey == 1
 		r.StripPrefix = strip == 1
-		r.APIKeys = keysByRouteID[id]
 		routes = append(routes, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -334,22 +268,11 @@ func (s *Store) AddRoute(r Route) error {
 	var maxPos int
 	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM routes").Scan(&maxPos)
 
-	res, err := tx.Exec(
-		"INSERT INTO routes (name, path_prefix, target, policy_name, require_api_key, strip_prefix, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.RequireAPIKey), boolToInt(r.StripPrefix), maxPos+1,
-	)
-	if err != nil {
+	if _, err := tx.Exec(
+		"INSERT INTO routes (name, path_prefix, target, policy_name, strip_prefix, position) VALUES (?, ?, ?, ?, ?, ?)",
+		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.StripPrefix), maxPos+1,
+	); err != nil {
 		return err
-	}
-
-	routeID, _ := res.LastInsertId()
-	for _, key := range r.APIKeys {
-		if key == "" {
-			continue
-		}
-		if _, err := tx.Exec("INSERT INTO route_api_keys (route_id, key) VALUES (?, ?)", routeID, key); err != nil {
-			return err
-		}
 	}
 
 	return tx.Commit()
@@ -378,22 +301,10 @@ func (s *Store) UpdateRoute(index int, r Route) error {
 	}
 
 	if _, err := tx.Exec(
-		"UPDATE routes SET name = ?, path_prefix = ?, target = ?, policy_name = ?, require_api_key = ?, strip_prefix = ? WHERE id = ?",
-		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.RequireAPIKey), boolToInt(r.StripPrefix), id,
+		"UPDATE routes SET name = ?, path_prefix = ?, target = ?, policy_name = ?, strip_prefix = ? WHERE id = ?",
+		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.StripPrefix), id,
 	); err != nil {
 		return err
-	}
-
-	if _, err := tx.Exec("DELETE FROM route_api_keys WHERE route_id = ?", id); err != nil {
-		return err
-	}
-	for _, key := range r.APIKeys {
-		if key == "" {
-			continue
-		}
-		if _, err := tx.Exec("INSERT INTO route_api_keys (route_id, key) VALUES (?, ?)", id, key); err != nil {
-			return err
-		}
 	}
 
 	return tx.Commit()
@@ -413,28 +324,6 @@ func (s *Store) DeleteRoute(index int) error {
 
 	_, err = s.db.Exec("DELETE FROM routes WHERE id = ?", id)
 	return err
-}
-
-func (s *Store) listAllRouteAPIKeys() (map[int][]string, error) {
-	rows, err := s.db.Query("SELECT route_id, key FROM route_api_keys ORDER BY id")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	keysByRouteID := map[int][]string{}
-	for rows.Next() {
-		var routeID int
-		var key string
-		if err := rows.Scan(&routeID, &key); err != nil {
-			return nil, err
-		}
-		keysByRouteID[routeID] = append(keysByRouteID[routeID], key)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return keysByRouteID, nil
 }
 
 // --- request logs ---
@@ -519,12 +408,6 @@ func (s *Store) DeleteAllSessions() error {
 func (s *Store) HasRoutes() bool {
 	var count int
 	s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count)
-	return count > 0
-}
-
-func (s *Store) HasSettings() bool {
-	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM settings").Scan(&count)
 	return count > 0
 }
 

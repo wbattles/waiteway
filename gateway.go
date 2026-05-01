@@ -165,15 +165,6 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		clientIP = g.clientIP(r)
 	}
 
-	if route.RequireAPIKey && !g.authorizeRouteAPIKey(route, apiKey, requestUser, hasRequestUser) {
-		if clientIP == "" {
-			clientIP = g.clientIP(r)
-		}
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		g.recordRequest(r, clientIP, route.Name, http.StatusUnauthorized, 0, time.Now())
-		return
-	}
-
 	if applyCORSPreflight(route.policy, w, r) {
 		if clientIP == "" {
 			clientIP = g.clientIP(r)

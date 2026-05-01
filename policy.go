@@ -163,9 +163,6 @@ func routePolicyLabel(route Route) string {
 	if route.PolicyName != "" {
 		return route.PolicyName
 	}
-	if route.RequireAPIKey {
-		return "legacy api key"
-	}
 	return "none"
 }
 

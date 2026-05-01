@@ -16,7 +16,6 @@ func testGateway(t *testing.T, upstream *httptest.Server, policy Policy) *httpte
 	target := upstream.URL
 
 	config := Config{
-		Admin:    AdminConfig{Username: "admin", Password: "admin"},
 		LogLimit: 10,
 		Policies: []Policy{policy},
 		Routes: []Route{
@@ -60,7 +59,6 @@ func TestPolicyAPIKeyAuth(t *testing.T) {
 		RequireAPIKey: true,
 	}
 	config := Config{
-		Admin:    AdminConfig{Username: "admin", Password: "admin"},
 		LogLimit: 10,
 		Policies: []Policy{policy},
 		Routes: []Route{
@@ -556,7 +554,6 @@ func TestPolicyPathRewrite(t *testing.T) {
 
 	target := upstream.URL
 	config := Config{
-		Admin:    AdminConfig{Username: "admin", Password: "admin"},
 		LogLimit: 10,
 		Policies: []Policy{{
 			Name:              "rewrite",
@@ -602,7 +599,6 @@ func TestPolicyMultipleFeatures(t *testing.T) {
 		AddRequestHeaders: []string{"X-Injected: yes"},
 	}
 	config := Config{
-		Admin:    AdminConfig{Username: "admin", Password: "admin"},
 		LogLimit: 10,
 		Policies: []Policy{policy},
 		Routes: []Route{

@@ -73,13 +73,11 @@ func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request)
 func routeFromForm(r *http.Request) (Route, error) {
 	r.ParseForm()
 	route := Route{
-		Name:          strings.TrimSpace(r.FormValue("route_name")),
-		PathPrefix:    normalizePathPrefix(strings.TrimSpace(r.FormValue("route_path_prefix"))),
-		Target:        strings.TrimSpace(r.FormValue("route_target")),
-		PolicyName:    strings.TrimSpace(r.FormValue("route_policy_name")),
-		RequireAPIKey: false,
-		StripPrefix:   r.FormValue("route_strip_prefix") == "true",
-		APIKeys:       nil,
+		Name:        strings.TrimSpace(r.FormValue("route_name")),
+		PathPrefix:  normalizePathPrefix(strings.TrimSpace(r.FormValue("route_path_prefix"))),
+		Target:      strings.TrimSpace(r.FormValue("route_target")),
+		PolicyName:  strings.TrimSpace(r.FormValue("route_policy_name")),
+		StripPrefix: r.FormValue("route_strip_prefix") == "true",
 	}
 
 	if route.Name == "" {

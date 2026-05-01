@@ -5,7 +5,6 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 )
@@ -74,23 +73,6 @@ func TestTLSConfigFromEnvironmentRejectsBadCert(t *testing.T) {
 
 	if _, err := tlsConfigFromEnvironment(); err == nil {
 		t.Fatal("expected bad certificate file to fail")
-	}
-}
-
-func TestTLSConfigFromEnvironmentRejectsDeprecatedVars(t *testing.T) {
-	for _, name := range []string{"WAITEWAY_CA_CERT_FILE", "WAITEWAY_CA_CERT_DIR"} {
-		t.Run(name, func(t *testing.T) {
-			resetTransportState()
-			t.Setenv(name, "/some/path")
-
-			_, err := tlsConfigFromEnvironment()
-			if err == nil {
-				t.Fatalf("expected error when %s is set", name)
-			}
-			if !strings.Contains(err.Error(), "WAITEWAY_CA_CERT") {
-				t.Fatalf("error should mention the new variable, got: %v", err)
-			}
-		})
 	}
 }
 

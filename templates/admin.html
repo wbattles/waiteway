@@ -82,8 +82,9 @@
     .muted { opacity: 0.7; }
     .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center; z-index: 10; }
     .modal.hidden { display: none; }
-    .modal-box { background: #fff; padding: 24px; width: 420px; max-width: 90vw; border: 1px solid #000; display: flex; flex-direction: column; gap: 12px; }
-    .modal-box h2 { font-size: 0.95rem; font-weight: 500; }
+    .modal-box { position: relative; background: #fff; padding: 24px; width: 420px; max-width: 90vw; border: 1px solid #000; display: flex; flex-direction: column; gap: 12px; }
+    .modal-box h2 { font-size: 0.95rem; font-weight: 500; padding-right: 24px; }
+    .modal-close { position: absolute; top: 8px; right: 12px; background: none; border: none; font-size: 1rem; line-height: 1; cursor: pointer; padding: 4px 6px; font-family: inherit; color: inherit; }
     .modal-box form { display: flex; flex-direction: column; gap: 12px; }
     .modal-box textarea { min-height: 90px; resize: vertical; }
     .modal-box input, .modal-box textarea { width: 100%; border: 1px solid #000; padding: 8px 10px; font-size: 0.875rem; font-family: inherit; outline: none; }
@@ -436,6 +437,7 @@
 
   <div id="route-modal" class="modal hidden">
     <div class="modal-box">
+      <button type="button" class="modal-close" aria-label="close" onclick="closeRouteModal()">✕</button>
       <h2 id="route-modal-title">add route</h2>
       <form id="route-form" method="post" action="/">
         <div id="route-modal-error" class="modal-error hidden"></div>
@@ -473,6 +475,7 @@
 
   <div id="settings-modal" class="modal hidden">
     <div class="modal-box policy-add-modal-box">
+      <button type="button" class="modal-close" aria-label="close" onclick="closeSettingsModal()">✕</button>
       <h2 id="settings-modal-title">edit setting</h2>
       <form method="post" action="/?tab=config">
         <input type="hidden" id="settings-action" name="action" value="save_logging">
@@ -487,6 +490,7 @@
 
   <div id="policy-modal" class="modal hidden">
     <div class="modal-box policy-modal-box">
+      <button type="button" class="modal-close" aria-label="close" onclick="closePolicyModal()">✕</button>
       <h2 id="policy-modal-title">add policy</h2>
       <form id="policy-form" method="post" action="/">
         <input type="hidden" id="policy-action" name="action" value="add_policy">
@@ -780,6 +784,7 @@
 
   <div id="policy-add-modal" class="modal policy-add-modal hidden">
     <div class="modal-box">
+      <button type="button" class="modal-close" aria-label="close" onclick="closePolicyAddModal()">✕</button>
       <h2>add policy feature</h2>
       <div class="policy-add-list">
         <button type="button" class="policy-add-option" onclick="addPolicyFeature('timeout')"><strong>request timeout</strong><small>stop slow upstream calls</small></button>

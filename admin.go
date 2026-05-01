@@ -18,7 +18,6 @@ import (
 type adminPageData struct {
 	CurrentUser           User
 	IsAdmin               bool
-	AdminUsername         string
 	LogLimit              int
 	LoadBalancerMode      string
 	LoadBalancerHeader    string
@@ -97,10 +96,6 @@ func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	user, ok := g.currentUser(r)
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
-	}
-	if !user.IsAdmin {
-		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -210,18 +205,6 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		g.handleAdminDeletePolicy(w, r)
-	case "save_settings":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
-		g.handleAdminSaveSettings(w, r)
-	case "change_password":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
-		g.handleAdminChangePassword(w, r)
 	case "save_logging":
 		if !g.authorizeAdmin(r) {
 			g.renderAdminError(w, "admin access required")
@@ -351,7 +334,7 @@ func (g *Gateway) adminPageData(user User, errText, activeTab string) adminPageD
 	openRoutes := 0
 	protectedRoutes := 0
 	for _, route := range routes {
-		if route.PolicyName != "" || route.RequireAPIKey {
+		if route.PolicyName != "" {
 			protectedRoutes++
 		} else {
 			openRoutes++
@@ -361,7 +344,6 @@ func (g *Gateway) adminPageData(user User, errText, activeTab string) adminPageD
 	data := adminPageData{
 		CurrentUser:           user,
 		IsAdmin:               user.IsAdmin,
-		AdminUsername:         config.Admin.Username,
 		LogLimit:              config.LogLimit,
 		LoadBalancerMode:      config.LoadBalancer.Mode,
 		LoadBalancerHeader:    config.LoadBalancer.ClientIPHeader,
@@ -390,7 +372,6 @@ func (g *Gateway) renderAdminError(w http.ResponseWriter, message string) {
 
 func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, _ string, errText string) {
 	data := g.adminPageData(User{IsAdmin: true}, errText, config.ActiveTab)
-	data.AdminUsername = config.Admin.Username
 	data.LogLimit = config.LogLimit
 	data.LoadBalancerMode = config.LoadBalancer.Mode
 	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader

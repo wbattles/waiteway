@@ -11,7 +11,6 @@ import (
 )
 
 type Config struct {
-	Admin        AdminConfig
 	LogLimit     int
 	LoadBalancer LoadBalancerConfig
 	Policies     []Policy
@@ -35,11 +34,6 @@ type APIKey struct {
 	CreatedAt time.Time
 }
 
-type AdminConfig struct {
-	Username string
-	Password string
-}
-
 type LoadBalancerConfig struct {
 	Mode           string
 	ClientIPHeader string
@@ -47,13 +41,11 @@ type LoadBalancerConfig struct {
 }
 
 type Route struct {
-	Name          string
-	PathPrefix    string
-	Target        string
-	PolicyName    string
-	RequireAPIKey bool
-	StripPrefix   bool
-	APIKeys       []string
+	Name        string
+	PathPrefix  string
+	Target      string
+	PolicyName  string
+	StripPrefix bool
 }
 
 const defaultDBPath = "waiteway.db"
@@ -77,14 +69,12 @@ func main() {
 		})
 	}
 
-	seedFromEnv(store)
-
-	config, err := store.LoadConfig()
-	if err != nil {
+	if err := store.EnsureFirstAdmin(os.Getenv("WAITEWAY_ADMIN_USERNAME"), os.Getenv("WAITEWAY_ADMIN_PASSWORD")); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := store.EnsureLegacyAdmin(config.Admin.Username, config.Admin.Password); err != nil {
+	config, err := store.LoadConfig()
+	if err != nil {
 		log.Fatal(err)
 	}
 
@@ -133,18 +123,3 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-func seedFromEnv(store *Store) {
-	if store.HasSettings() {
-		return
-	}
-
-	username := os.Getenv("WAITEWAY_ADMIN_USERNAME")
-	password := os.Getenv("WAITEWAY_ADMIN_PASSWORD")
-
-	if username != "" {
-		store.SetSetting("admin_username", username)
-	}
-	if password != "" {
-		store.SetSetting("admin_password", password)
-	}
-}

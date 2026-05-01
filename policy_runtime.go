@@ -88,14 +88,6 @@ func (g *Gateway) authorizePolicyUserAuth(policy *compiledPolicy, username, pass
 	return true
 }
 
-func (g *Gateway) authorizeRouteAPIKey(route compiledRoute, key string, _ User, hasRequestUser bool) bool {
-	if len(route.apiKeys) == 0 {
-		return hasRequestUser
-	}
-	_, ok := route.apiKeys[key]
-	return ok
-}
-
 func (g *Gateway) cachedPolicyResponse(route compiledRoute, key string, now time.Time) (cachedResponse, bool) {
 	if route.policy == nil || route.policy.cache == nil || key == "" || now.IsZero() {
 		return cachedResponse{}, false

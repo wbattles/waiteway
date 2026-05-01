@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,6 +29,10 @@ type passwordChangeRequest struct {
 
 type adminPasswordChangeRequest struct {
 	NewPassword string `json:"new_password"`
+}
+
+type adminRoleChangeRequest struct {
+	IsAdmin bool `json:"is_admin"`
 }
 
 func (g *Gateway) handleUsersAdminPage(w http.ResponseWriter, r *http.Request) {
@@ -239,13 +244,17 @@ func (g *Gateway) handleAPIAdminUsers(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if len(strings.TrimSpace(req.Username)) > 15 {
-			writeAPIError(w, http.StatusBadRequest, "username must be 15 characters or less")
+		if _, err := normalizeUsername(req.Username); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		user, err := g.store.CreateUser(req.Username, req.Password, req.IsAdmin)
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, "failed to create user")
+			if errors.Is(err, ErrUsernameTaken) {
+				writeAPIError(w, http.StatusBadRequest, "username already exists")
+				return
+			}
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"id": user.ID, "username": user.Username, "is_admin": user.IsAdmin, "created_at": user.CreatedAt.Format(time.RFC3339), "created_by": admin.ID})
@@ -292,6 +301,51 @@ func (g *Gateway) handleAPIAdminUserByID(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
+		return
+	}
+	if strings.HasSuffix(path, "/admin") {
+		userID, err := strconv.Atoi(strings.TrimSuffix(path, "/admin"))
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid user id")
+			return
+		}
+		if r.Method != http.MethodPatch {
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req adminRoleChangeRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		target, err := g.store.GetUserByID(userID)
+		if err != nil {
+			writeAPIError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		if target.IsAdmin == req.IsAdmin {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "no change"})
+			return
+		}
+		if !req.IsAdmin {
+			if target.ID == admin.ID {
+				writeAPIError(w, http.StatusBadRequest, "cannot remove your own admin role")
+				return
+			}
+			count, err := g.store.CountAdmins()
+			if err != nil {
+				writeAPIError(w, http.StatusInternalServerError, "failed to check admins")
+				return
+			}
+			if count <= 1 {
+				writeAPIError(w, http.StatusBadRequest, "cannot remove the last admin")
+				return
+			}
+		}
+		if err := g.store.SetUserAdmin(userID, req.IsAdmin); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "failed to update role")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": target.ID, "is_admin": req.IsAdmin})
 		return
 	}
 	userID, err := strconv.Atoi(path)

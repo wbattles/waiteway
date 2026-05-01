@@ -74,7 +74,6 @@ func BenchmarkProxyBasicRoute(b *testing.B) {
 	silenceStdout(b)
 	upstream := upstreamForBench(b)
 	url := gatewayForBench(b, Config{
-		Admin: AdminConfig{Username: "admin", Password: "admin"},
 		Routes: []Route{
 			{Name: "bench", PathPrefix: "/api/bench", Target: upstream.URL},
 		},
@@ -98,7 +97,6 @@ func BenchmarkProxyWithPolicy(b *testing.B) {
 	silenceStdout(b)
 	upstream := upstreamForBench(b)
 	url := gatewayForBench(b, Config{
-		Admin: AdminConfig{Username: "admin", Password: "admin"},
 		Policies: []Policy{
 			{
 				Name:               "bench",
@@ -129,7 +127,6 @@ func BenchmarkProxyCacheHit(b *testing.B) {
 	silenceStdout(b)
 	upstream := upstreamForBench(b)
 	url := gatewayForBench(b, Config{
-		Admin: AdminConfig{Username: "admin", Password: "admin"},
 		Policies: []Policy{
 			{Name: "cached", CacheTTLSeconds: 60},
 		},
@@ -178,7 +175,6 @@ func BenchmarkRouteMatch(b *testing.B) {
 	b.Cleanup(func() { store.Close() })
 
 	gw, err := newGateway(store, Config{
-		Admin:  AdminConfig{Username: "admin", Password: "admin"},
 		Routes: routes,
 	})
 	if err != nil {

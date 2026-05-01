@@ -19,13 +19,6 @@ var (
 	gatewayTransportErr  error
 )
 
-// systemCertBundlePaths lists well-known OS trust store locations.
-var systemCertBundlePaths = []string{
-	"/etc/ssl/certs/ca-certificates.crt", // Alpine, Debian, Ubuntu
-	"/etc/ssl/cert.pem",                  // Alpine fallback, BSD, macOS
-	"/etc/pki/tls/certs/ca-bundle.crt",   // RHEL, Fedora, CentOS
-}
-
 // sharedTransport returns the process-wide upstream transport.
 func sharedTransport() (*http.Transport, error) {
 	gatewayTransportOnce.Do(func() {
@@ -94,18 +87,9 @@ func tlsConfigFromEnvironment() (*tls.Config, error) {
 		return nil, nil
 	}
 
-	// Always read the OS bundle files even when SystemCertPool succeeds.
-	// SystemCertPool can return non-nil but missing the roots we expect,
-	// which would silently strip public CAs once we append the user cert.
-	// Duplicate certs in the pool are harmless.
 	pool, err := x509.SystemCertPool()
 	if err != nil || pool == nil {
 		pool = x509.NewCertPool()
-	}
-	for _, p := range systemCertBundlePaths {
-		if data, err := os.ReadFile(p); err == nil {
-			pool.AppendCertsFromPEM(data)
-		}
 	}
 
 	pem, err := os.ReadFile(path)

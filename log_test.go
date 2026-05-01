@@ -50,7 +50,6 @@ func TestGatewayDrainsPendingLogsOnClose(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	gw, err := newGateway(store, Config{
-		Admin:    AdminConfig{Username: "admin", Password: "admin"},
 		LogLimit: 100,
 	})
 	if err != nil {
@@ -82,7 +81,6 @@ func TestGatewayCloseIsIdempotent(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	gw, err := newGateway(store, Config{
-		Admin: AdminConfig{Username: "admin", Password: "admin"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +98,6 @@ func TestGatewayRecordRequestIsNonBlocking(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	gw, err := newGateway(store, Config{
-		Admin: AdminConfig{Username: "admin", Password: "admin"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +134,6 @@ func TestAdminMetricsEndpointReportsCounters(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	gw, err := newGateway(store, Config{
-		Admin: AdminConfig{Username: "admin", Password: "admin"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +173,6 @@ func TestGatewayLogRequestWritesRawJSONLine(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	gw, err := newGateway(store, Config{
-		Admin: AdminConfig{Username: "admin", Password: "admin"},
 	})
 	if err != nil {
 		t.Fatal(err)
