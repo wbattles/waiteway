@@ -1,13 +1,8 @@
 package main
 
 import (
-	"crypto/tls"
-	"crypto/x509"
-	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -18,13 +13,6 @@ var (
 	gatewayTransport     *http.Transport
 	gatewayTransportErr  error
 )
-
-// systemCertBundlePaths lists well-known OS trust store locations.
-var systemCertBundlePaths = []string{
-	"/etc/ssl/certs/ca-certificates.crt", // Alpine, Debian, Ubuntu
-	"/etc/ssl/cert.pem",                  // Alpine fallback, BSD, macOS
-	"/etc/pki/tls/certs/ca-bundle.crt",   // RHEL, Fedora, CentOS
-}
 
 // sharedTransport returns the process-wide upstream transport.
 func sharedTransport() (*http.Transport, error) {
@@ -42,11 +30,6 @@ func newTunedTransport() (*http.Transport, error) {
 
 		// Keep idle upstream connections healthy.
 		KeepAlive: 30 * time.Second,
-	}
-
-	tlsConfig, err := tlsConfigFromEnvironment()
-	if err != nil {
-		return nil, err
 	}
 
 	return &http.Transport{
@@ -83,38 +66,5 @@ func newTunedTransport() (*http.Transport, error) {
 		// Pass upstream response bodies through as-is.
 		DisableCompression: true,
 
-		// Trust system roots plus any extra cert from WAITEWAY_CA_CERT.
-		TLSClientConfig: tlsConfig,
 	}, nil
-}
-
-func tlsConfigFromEnvironment() (*tls.Config, error) {
-	path := strings.TrimSpace(os.Getenv("WAITEWAY_CA_CERT"))
-	if path == "" {
-		return nil, nil
-	}
-
-	// Always read the OS bundle files even when SystemCertPool succeeds.
-	// SystemCertPool can return non-nil but missing the roots we expect,
-	// which would silently strip public CAs once we append the user cert.
-	// Duplicate certs in the pool are harmless.
-	pool, err := x509.SystemCertPool()
-	if err != nil || pool == nil {
-		pool = x509.NewCertPool()
-	}
-	for _, p := range systemCertBundlePaths {
-		if data, err := os.ReadFile(p); err == nil {
-			pool.AppendCertsFromPEM(data)
-		}
-	}
-
-	pem, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read WAITEWAY_CA_CERT %q: %w", path, err)
-	}
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("parse WAITEWAY_CA_CERT %q: no PEM certificates found", path)
-	}
-
-	return &tls.Config{RootCAs: pool}, nil
 }

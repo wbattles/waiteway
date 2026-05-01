@@ -115,18 +115,20 @@ Change admin username, password, and log limit.
 | `WAITEWAY_ADMIN_PASSWORD` | `change-me` | admin password |
 | `WAITEWAY_LISTEN` | `:8080` | gateway listen address |
 | `WAITEWAY_ADMIN_LISTEN` | `:9090` | admin listen address |
-| `WAITEWAY_CA_CERT` | unset | path to a PEM file with extra root certs (see [Private certificates](#private-certificates)) |
+| `SSL_CERT_FILE` | unset | optional CA bundle path for private networks or corporate proxies |
 
 ## Private certificates
 
-For upstreams using private CAs, self-signed certs, or networks that re-sign HTTPS traffic (Zscaler, Netskope, homelab, internal services). Point `WAITEWAY_CA_CERT` at a PEM file with the root cert(s).
+For upstreams using private CAs, self-signed certs, or networks that re-sign HTTPS traffic (Zscaler, Netskope, homelab, internal services), set `SSL_CERT_FILE` to the CA bundle that works in your environment.
 
-Your cert is added alongside system roots, not in place of them. Public sites keep working.
+If a file with only your private root breaks public HTTPS, use a full bundle that includes both the usual public roots and your private root(s).
+
+Migration note: `WAITEWAY_CA_CERT` was removed. Use `SSL_CERT_FILE` instead.
 
 ### Local
 
 ```bash
-WAITEWAY_CA_CERT=./root.pem go run .
+SSL_CERT_FILE=./bundle.pem go run .
 ```
 
 ### Docker
@@ -135,8 +137,8 @@ WAITEWAY_CA_CERT=./root.pem go run .
 docker run \
   -p 8080:8080 -p 9090:9090 \
   -v ./data:/data \
-  -v ./root.pem:/certs/root.pem:ro \
-  -e WAITEWAY_CA_CERT=/certs/root.pem \
+  -v ./bundle.pem:/certs/bundle.pem:ro \
+  -e SSL_CERT_FILE=/certs/bundle.pem \
   waiteway
 ```
 
@@ -154,16 +156,14 @@ extraVolumeMounts:
     mountPath: /certs
     readOnly: true
 extraEnv:
-  - name: WAITEWAY_CA_CERT
-    value: /certs/root.pem
+  - name: SSL_CERT_FILE
+    value: /certs/bundle.pem
 ```
 
-### Multiple certs
-
-PEM files can hold multiple certs. Concatenate them into one bundle:
+### Bundle example
 
 ```bash
-cat root.pem intermediate.pem > bundle.pem
+cat public-roots.pem private-root.pem > bundle.pem
 ```
 
 ## Architecture
