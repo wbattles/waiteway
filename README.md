@@ -115,18 +115,16 @@ Change admin username, password, and log limit.
 | `WAITEWAY_ADMIN_PASSWORD` | `change-me` | admin password |
 | `WAITEWAY_LISTEN` | `:8080` | gateway listen address |
 | `WAITEWAY_ADMIN_LISTEN` | `:9090` | admin listen address |
-| `WAITEWAY_CA_CERT` | unset | path to a PEM file with extra root certs (see [Private certificates](#private-certificates)) |
+| `SSL_CERT_FILE` | unset | optional Go/OpenSSL-style CA bundle path; useful behind corporate proxies |
 
 ## Private certificates
 
-For upstreams using private CAs, self-signed certs, or networks that re-sign HTTPS traffic (Zscaler, Netskope, homelab, internal services). Point `WAITEWAY_CA_CERT` at a PEM file with the root cert(s).
-
-Your cert is added alongside system roots, not in place of them. Public sites keep working.
+For upstreams using private CAs, self-signed certs, or networks that re-sign HTTPS traffic (Zscaler, Netskope, homelab, internal services), set `SSL_CERT_FILE` to the CA bundle that works in your environment.
 
 ### Local
 
 ```bash
-WAITEWAY_CA_CERT=./root.pem go run .
+SSL_CERT_FILE=./root.pem go run .
 ```
 
 ### Docker
@@ -136,7 +134,7 @@ docker run \
   -p 8080:8080 -p 9090:9090 \
   -v ./data:/data \
   -v ./root.pem:/certs/root.pem:ro \
-  -e WAITEWAY_CA_CERT=/certs/root.pem \
+  -e SSL_CERT_FILE=/certs/root.pem \
   waiteway
 ```
 
@@ -154,16 +152,8 @@ extraVolumeMounts:
     mountPath: /certs
     readOnly: true
 extraEnv:
-  - name: WAITEWAY_CA_CERT
+  - name: SSL_CERT_FILE
     value: /certs/root.pem
-```
-
-### Multiple certs
-
-PEM files can hold multiple certs. Concatenate them into one bundle:
-
-```bash
-cat root.pem intermediate.pem > bundle.pem
 ```
 
 ## Architecture
