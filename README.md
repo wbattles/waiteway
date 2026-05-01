@@ -115,16 +115,20 @@ Change admin username, password, and log limit.
 | `WAITEWAY_ADMIN_PASSWORD` | `change-me` | admin password |
 | `WAITEWAY_LISTEN` | `:8080` | gateway listen address |
 | `WAITEWAY_ADMIN_LISTEN` | `:9090` | admin listen address |
-| `SSL_CERT_FILE` | unset | optional Go/OpenSSL-style CA bundle path; useful behind corporate proxies |
+| `SSL_CERT_FILE` | unset | optional CA bundle path for private networks or corporate proxies |
 
 ## Private certificates
 
 For upstreams using private CAs, self-signed certs, or networks that re-sign HTTPS traffic (Zscaler, Netskope, homelab, internal services), set `SSL_CERT_FILE` to the CA bundle that works in your environment.
 
+If a file with only your private root breaks public HTTPS, use a full bundle that includes both the usual public roots and your private root(s).
+
+Migration note: `WAITEWAY_CA_CERT` was removed. Use `SSL_CERT_FILE` instead.
+
 ### Local
 
 ```bash
-SSL_CERT_FILE=./root.pem go run .
+SSL_CERT_FILE=./bundle.pem go run .
 ```
 
 ### Docker
@@ -133,8 +137,8 @@ SSL_CERT_FILE=./root.pem go run .
 docker run \
   -p 8080:8080 -p 9090:9090 \
   -v ./data:/data \
-  -v ./root.pem:/certs/root.pem:ro \
-  -e SSL_CERT_FILE=/certs/root.pem \
+  -v ./bundle.pem:/certs/bundle.pem:ro \
+  -e SSL_CERT_FILE=/certs/bundle.pem \
   waiteway
 ```
 
@@ -153,7 +157,13 @@ extraVolumeMounts:
     readOnly: true
 extraEnv:
   - name: SSL_CERT_FILE
-    value: /certs/root.pem
+    value: /certs/bundle.pem
+```
+
+### Bundle example
+
+```bash
+cat public-roots.pem private-root.pem > bundle.pem
 ```
 
 ## Architecture
