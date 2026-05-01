@@ -115,20 +115,18 @@ Change admin username, password, and log limit.
 | `WAITEWAY_ADMIN_PASSWORD` | `change-me` | admin password |
 | `WAITEWAY_LISTEN` | `:8080` | gateway listen address |
 | `WAITEWAY_ADMIN_LISTEN` | `:9090` | admin listen address |
-| `SSL_CERT_FILE` | unset | optional CA bundle path for private networks or corporate proxies |
+| `WAITEWAY_CA_CERT` | unset | path to a PEM file with extra root certs (see [Private certificates](#private-certificates)) |
 
 ## Private certificates
 
-For upstreams using private CAs, self-signed certs, or networks that re-sign HTTPS traffic (Zscaler, Netskope, homelab, internal services), set `SSL_CERT_FILE` to the CA bundle that works in your environment.
+For upstreams using private CAs, self-signed certs, or networks that re-sign HTTPS traffic (Zscaler, Netskope, homelab, internal services). Point `WAITEWAY_CA_CERT` at a PEM file with the root cert(s).
 
-If a file with only your private root breaks public HTTPS, use a full bundle that includes both the usual public roots and your private root(s).
-
-Migration note: `WAITEWAY_CA_CERT` was removed. Use `SSL_CERT_FILE` instead.
+Your cert is added alongside system roots, not in place of them. Public sites keep working.
 
 ### Local
 
 ```bash
-SSL_CERT_FILE=./bundle.pem go run .
+WAITEWAY_CA_CERT=./root.pem go run .
 ```
 
 ### Docker
@@ -137,8 +135,8 @@ SSL_CERT_FILE=./bundle.pem go run .
 docker run \
   -p 8080:8080 -p 9090:9090 \
   -v ./data:/data \
-  -v ./bundle.pem:/certs/bundle.pem:ro \
-  -e SSL_CERT_FILE=/certs/bundle.pem \
+  -v ./root.pem:/certs/root.pem:ro \
+  -e WAITEWAY_CA_CERT=/certs/root.pem \
   waiteway
 ```
 
@@ -156,14 +154,16 @@ extraVolumeMounts:
     mountPath: /certs
     readOnly: true
 extraEnv:
-  - name: SSL_CERT_FILE
-    value: /certs/bundle.pem
+  - name: WAITEWAY_CA_CERT
+    value: /certs/root.pem
 ```
 
-### Bundle example
+### Multiple certs
+
+PEM files can hold multiple certs. Concatenate them into one bundle:
 
 ```bash
-cat public-roots.pem private-root.pem > bundle.pem
+cat root.pem intermediate.pem > bundle.pem
 ```
 
 ## Architecture
