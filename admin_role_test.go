@@ -113,10 +113,16 @@ func TestCurrentUserPurgesExpiredSessions(t *testing.T) {
 	}
 	t.Cleanup(gw.Close)
 
+	// currentUser should reject the expired session (UserBySessionID filters by age).
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: "waiteway_session", Value: "old-session"})
 	if _, ok := gw.currentUser(req); ok {
 		t.Fatal("expected expired session to fail")
+	}
+
+	// The background purge loop handles cleanup; invoke it directly to test.
+	if err := store.PurgeExpiredSessions(); err != nil {
+		t.Fatal(err)
 	}
 
 	var count int

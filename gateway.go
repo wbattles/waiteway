@@ -32,6 +32,8 @@ type Gateway struct {
 	doneCh    chan struct{}
 	metrics   gatewayMetrics
 	closeOnce sync.Once
+
+	sessionPurgeDone chan struct{}
 }
 
 type gatewayMetrics struct {
@@ -78,17 +80,18 @@ func newGateway(store *Store, config Config) (*Gateway, error) {
 	}
 
 	g := &Gateway{
-		store:        store,
-		startedAt:    time.Now(),
-		tmpl:         tmpl,
-		usersTmpl:    usersTmpl,
-		settingsTmpl: settingsTmpl,
-		loginTmpl:    loginTmpl,
-		listenAddr:   envOrDefault("WAITEWAY_LISTEN", ":8080"),
-		adminListen:  envOrDefault("WAITEWAY_ADMIN_LISTEN", ":9090"),
-		logCh:        make(chan requestLog, 1024),
-		stopCh:       make(chan struct{}),
-		doneCh:       make(chan struct{}),
+		store:            store,
+		startedAt:        time.Now(),
+		tmpl:             tmpl,
+		usersTmpl:        usersTmpl,
+		settingsTmpl:     settingsTmpl,
+		loginTmpl:        loginTmpl,
+		listenAddr:       envOrDefault("WAITEWAY_LISTEN", ":8080"),
+		adminListen:      envOrDefault("WAITEWAY_ADMIN_LISTEN", ":9090"),
+		logCh:            make(chan requestLog, 1024),
+		stopCh:           make(chan struct{}),
+		doneCh:           make(chan struct{}),
+		sessionPurgeDone: make(chan struct{}),
 	}
 
 	if err := g.applyConfig(config); err != nil {
@@ -96,16 +99,18 @@ func newGateway(store *Store, config Config) (*Gateway, error) {
 	}
 
 	go g.drainLogs()
+	go g.purgeSessionsLoop()
 
 	return g, nil
 }
 
-// Close stops the background log drainer and waits for it to finish. Pending
+// Close stops background goroutines and waits for them to finish. Pending
 // in-memory log entries are flushed to the store before returning. Safe to
 // call from multiple goroutines.
 func (g *Gateway) Close() {
 	g.closeOnce.Do(func() { close(g.stopCh) })
 	<-g.doneCh
+	<-g.sessionPurgeDone
 }
 
 func (g *Gateway) applyConfig(config Config) error {
@@ -343,6 +348,22 @@ func appendJSONString(buf []byte, s string) []byte {
 		return append(buf, '"', '"')
 	}
 	return append(buf, encoded...)
+}
+
+// purgeSessionsLoop periodically removes expired sessions so the check does
+// not run on every request. Runs every 5 minutes until stopCh is closed.
+func (g *Gateway) purgeSessionsLoop() {
+	defer close(g.sessionPurgeDone)
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-g.stopCh:
+			return
+		case <-ticker.C:
+			_ = g.store.PurgeExpiredSessions()
+		}
+	}
 }
 
 // drainLogs is a single background consumer for request logs. It writes each

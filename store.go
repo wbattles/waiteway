@@ -109,6 +109,11 @@ func openStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	// SQLite only supports one concurrent writer. Limit open connections to
+	// avoid SQLITE_BUSY under load while still allowing concurrent reads.
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(2)
+
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
@@ -401,8 +406,8 @@ func (s *Store) ClearLogs() error {
 
 func (s *Store) TrimLogs(limit int) error {
 	_, err := s.db.Exec(`
-		DELETE FROM request_logs WHERE id NOT IN (
-			SELECT id FROM request_logs ORDER BY id DESC LIMIT ?
+		DELETE FROM request_logs WHERE id <= (
+			SELECT id FROM request_logs ORDER BY id DESC LIMIT 1 OFFSET ?
 		)
 	`, limit)
 	return err

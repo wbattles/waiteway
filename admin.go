@@ -134,7 +134,6 @@ func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
-	_ = g.store.PurgeExpiredSessions()
 	if _, ok := g.currentUser(r); ok && r.Method == http.MethodGet {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
@@ -265,7 +264,6 @@ func (g *Gateway) authorizeAdmin(r *http.Request) bool {
 }
 
 func (g *Gateway) currentUser(r *http.Request) (User, bool) {
-	_ = g.store.PurgeExpiredSessions()
 	cookie, err := r.Cookie("waiteway_session")
 	if err != nil || cookie.Value == "" {
 		return User{}, false

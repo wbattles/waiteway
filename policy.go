@@ -89,7 +89,7 @@ func compilePolicy(policy Policy) (*compiledPolicy, error) {
 		compiled.rateLimiter = &rateLimiter{
 			limit:   policy.RateLimitRequests,
 			window:  time.Duration(policy.RateLimitWindowSeconds) * time.Second,
-			entries: map[string][]time.Time{},
+			entries: map[string]*rateLimiterEntry{},
 		}
 	}
 
