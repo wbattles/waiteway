@@ -110,6 +110,7 @@ func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+	_ = g.store.PurgeExpiredSessions()
 	if _, ok := g.currentUser(r); ok && r.Method == http.MethodGet {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
@@ -148,13 +149,7 @@ func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "waiteway_session",
-		Value:    sessionID,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	setSessionCookie(w, r, sessionID)
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -169,13 +164,7 @@ func (g *Gateway) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 		g.store.DeleteSession(cookie.Value)
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "waiteway_session",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		MaxAge:   -1,
-	})
+	clearSessionCookie(w, r)
 
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
@@ -252,6 +241,7 @@ func (g *Gateway) authorizeAdmin(r *http.Request) bool {
 }
 
 func (g *Gateway) currentUser(r *http.Request) (User, bool) {
+	_ = g.store.PurgeExpiredSessions()
 	cookie, err := r.Cookie("waiteway_session")
 	if err != nil || cookie.Value == "" {
 		return User{}, false
@@ -269,6 +259,42 @@ func newSessionID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func requestIsSecure(r *http.Request) bool {
+	if r != nil && r.TLS != nil {
+		return true
+	}
+	if r != nil && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
+		return true
+	}
+	return false
+}
+
+func setSessionCookie(w http.ResponseWriter, r *http.Request, sessionID string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "waiteway_session",
+		Value:    sessionID,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsSecure(r),
+		MaxAge:   int(sessionMaxAge.Seconds()),
+		Expires:  time.Now().Add(sessionMaxAge),
+	})
+}
+
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "waiteway_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsSecure(r),
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
 }
 
 // saveConfig validates a Config, persists it, and applies the new config to

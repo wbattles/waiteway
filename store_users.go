@@ -10,8 +10,14 @@ import (
 // sessionMaxAge is how long a login cookie is valid before it expires.
 const sessionMaxAge = 30 * 24 * time.Hour
 
+// maxAPIKeysPerUser keeps each account's key list small and manageable.
+const maxAPIKeysPerUser = 10
+
 // ErrUsernameTaken is returned when CreateUser hits the unique-username index.
 var ErrUsernameTaken = errors.New("username already exists")
+
+// ErrAPIKeyLimitReached is returned when a user already has too many keys.
+var ErrAPIKeyLimitReached = errors.New("api key limit reached")
 
 // EnsureFirstAdmin creates the first admin user if no users exist yet.
 // It is a no-op once any user has been created.
@@ -138,6 +144,11 @@ func (s *Store) UpdateUserPassword(userID int, newPassword string) error {
 	return err
 }
 
+func (s *Store) DeleteSessionsForUser(userID int) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ?", userID)
+	return err
+}
+
 func (s *Store) DeleteUser(userID int) error {
 	_, err := s.db.Exec("DELETE FROM users WHERE id = ?", userID)
 	return err
@@ -196,6 +207,14 @@ func (s *Store) ListAPIKeysByUser(userID int) ([]APIKey, error) {
 }
 
 func (s *Store) CreateAPIKey(userID int, rawKey string) (APIKey, error) {
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM api_keys WHERE user_id = ?", userID).Scan(&count); err != nil {
+		return APIKey{}, err
+	}
+	if count >= maxAPIKeysPerUser {
+		return APIKey{}, ErrAPIKeyLimitReached
+	}
+
 	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
 	hashed := hashAPIKey(rawKey)
 	prefix := apiKeyPrefix(rawKey)

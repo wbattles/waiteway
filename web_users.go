@@ -159,6 +159,11 @@ func (g *Gateway) handleAPIMyPassword(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "failed to update password")
 		return
 	}
+	if err := g.store.DeleteSessionsForUser(user.ID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "failed to clear sessions")
+		return
+	}
+	clearSessionCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
 }
 
@@ -191,6 +196,10 @@ func (g *Gateway) handleAPIMyAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		key, err := g.store.CreateAPIKey(user.ID, rawKey)
 		if err != nil {
+			if errors.Is(err, ErrAPIKeyLimitReached) {
+				writeAPIError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 			writeAPIError(w, http.StatusInternalServerError, "failed to create api key")
 			return
 		}
@@ -299,6 +308,13 @@ func (g *Gateway) handleAPIAdminUserByID(w http.ResponseWriter, r *http.Request)
 		if err := g.store.UpdateUserPassword(userID, req.NewPassword); err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "failed to update password")
 			return
+		}
+		if err := g.store.DeleteSessionsForUser(userID); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "failed to clear sessions")
+			return
+		}
+		if userID == admin.ID {
+			clearSessionCookie(w, r)
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
 		return
