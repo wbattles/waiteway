@@ -424,7 +424,7 @@ func (s *Store) TrimLogs(limit int) error {
 func (s *Store) AddSession(id string) error {
 	_, err := s.db.Exec(
 		"INSERT INTO sessions (id, created_at) VALUES (?, ?)",
-		id, time.Now().Format(time.RFC3339),
+		id, time.Now().UTC().Format(time.RFC3339Nano),
 	)
 	return err
 }

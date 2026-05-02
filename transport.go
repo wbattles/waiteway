@@ -96,8 +96,9 @@ func tlsConfigFromEnvironment() (*tls.Config, error) {
 			"/etc/ssl/cert.pem",
 		} {
 			if pem, err := os.ReadFile(p); err == nil {
-				pool.AppendCertsFromPEM(pem)
-				break
+				if pool.AppendCertsFromPEM(pem) {
+					break
+				}
 			}
 		}
 	}

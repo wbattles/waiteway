@@ -393,6 +393,42 @@ func TestPolicyCORSPreflight(t *testing.T) {
 	}
 }
 
+func TestPolicyCORSSpecificOrigin(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	gw := testGateway(t, upstream, Policy{
+		Name:             "cors-specific",
+		CORSAllowOrigins: []string{"http://allowed.com", "http://also-ok.com"},
+		CORSAllowMethods: []string{"GET"},
+	})
+	defer gw.Close()
+
+	// allowed origin is reflected back
+	req, _ := http.NewRequest("OPTIONS", gw.URL+"/test", nil)
+	req.Header.Set("Origin", "http://allowed.com")
+	resp, _ := http.DefaultClient.Do(req)
+	if resp.StatusCode != 204 {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "http://allowed.com" {
+		t.Fatalf("expected reflected origin, got %q", got)
+	}
+	if got := resp.Header.Get("Vary"); got == "" {
+		t.Fatal("expected Vary: Origin for specific origin")
+	}
+
+	// non-allowed origin is rejected (no CORS preflight response)
+	req, _ = http.NewRequest("OPTIONS", gw.URL+"/test", nil)
+	req.Header.Set("Origin", "http://evil.com")
+	resp, _ = http.DefaultClient.Do(req)
+	if resp.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("expected no ACAO for disallowed origin, got %q", resp.Header.Get("Access-Control-Allow-Origin"))
+	}
+}
+
 func TestPolicyIPBlock(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
