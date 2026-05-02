@@ -155,10 +155,8 @@
         container.innerHTML = users.map(user => {
           const canChangePassword = !user.is_admin || user.id === currentUser?.id;
           const canDelete = user.id !== currentUser?.id && user.username !== 'admin';
-          const canToggleRole = user.id !== currentUser?.id;
           const createdDate = new Date(user.created_at);
           const createdText = `created ${createdDate.toLocaleDateString()}`;
-          const roleLabel = user.is_admin ? 'remove admin' : 'make admin';
           return `
             <div class="user-item">
               <div class="user-main">
@@ -170,7 +168,6 @@
               </div>
               <div class="user-actions">
                 ${canChangePassword ? `<button data-username="${esc(user.username)}" onclick="changePassword(${user.id}, this.dataset.username)">change password</button>` : ''}
-                ${canToggleRole ? `<button data-username="${esc(user.username)}" onclick="toggleAdmin(${user.id}, this.dataset.username, ${user.is_admin})">${roleLabel}</button>` : ''}
                 ${canDelete ? `<button data-username="${esc(user.username)}" onclick="deleteUser(${user.id}, this.dataset.username)">delete</button>` : ''}
               </div>
             </div>
@@ -240,26 +237,6 @@
           else {
             const error = await response.json();
             showConfirmModal('error', error.detail || 'failed to delete user', null);
-          }
-        } catch (error) {
-          showConfirmModal('error', 'connection error', null);
-        }
-      });
-    }
-
-    async function toggleAdmin(userId, username, isCurrentlyAdmin) {
-      const verb = isCurrentlyAdmin ? 'remove admin role from' : 'make admin';
-      showConfirmModal('', `${verb} ${username}?`, async () => {
-        try {
-          const response = await fetch(`/api/admin/users/${userId}/admin`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ is_admin: !isCurrentlyAdmin })
-          });
-          if (response.ok) loadUsers();
-          else {
-            const error = await response.json();
-            showConfirmModal('error', error.detail || 'failed to update role', null);
           }
         } catch (error) {
           showConfirmModal('error', 'connection error', null);

@@ -32,10 +32,6 @@ type adminPasswordChangeRequest struct {
 	NewPassword string `json:"new_password"`
 }
 
-type adminRoleChangeRequest struct {
-	IsAdmin bool `json:"is_admin"`
-}
-
 func (g *Gateway) handleUsersAdminPage(w http.ResponseWriter, r *http.Request) {
 	user, ok := g.currentUser(r)
 	if !ok {
@@ -316,51 +312,6 @@ func (g *Gateway) handleAPIAdminUserByID(w http.ResponseWriter, r *http.Request)
 			clearSessionCookie(w, r)
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
-		return
-	}
-	if strings.HasSuffix(path, "/admin") {
-		userID, err := strconv.Atoi(strings.TrimSuffix(path, "/admin"))
-		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid user id")
-			return
-		}
-		if r.Method != http.MethodPatch {
-			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		var req adminRoleChangeRequest
-		if !decodeJSON(w, r, &req) {
-			return
-		}
-		target, err := g.store.GetUserByID(userID)
-		if err != nil {
-			writeAPIError(w, http.StatusNotFound, "user not found")
-			return
-		}
-		if target.IsAdmin == req.IsAdmin {
-			writeJSON(w, http.StatusOK, map[string]string{"message": "no change"})
-			return
-		}
-		if !req.IsAdmin {
-			if target.ID == admin.ID {
-				writeAPIError(w, http.StatusBadRequest, "cannot remove your own admin role")
-				return
-			}
-			count, err := g.store.CountAdmins()
-			if err != nil {
-				writeAPIError(w, http.StatusInternalServerError, "failed to check admins")
-				return
-			}
-			if count <= 1 {
-				writeAPIError(w, http.StatusBadRequest, "cannot remove the last admin")
-				return
-			}
-		}
-		if err := g.store.SetUserAdmin(userID, req.IsAdmin); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "failed to update role")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"id": target.ID, "is_admin": req.IsAdmin})
 		return
 	}
 	userID, err := strconv.Atoi(path)

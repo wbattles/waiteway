@@ -120,19 +120,7 @@ func isUniqueConstraintError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "UNIQUE constraint failed") || strings.Contains(msg, "constraint failed")
-}
-
-func (s *Store) SetUserAdmin(userID int, isAdmin bool) error {
-	_, err := s.db.Exec("UPDATE users SET is_admin = ? WHERE id = ?", boolToInt(isAdmin), userID)
-	return err
-}
-
-func (s *Store) CountAdmins() (int, error) {
-	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM users WHERE is_admin = 1").Scan(&count)
-	return count, err
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 func (s *Store) UpdateUserPassword(userID int, newPassword string) error {
@@ -207,8 +195,14 @@ func (s *Store) ListAPIKeysByUser(userID int) ([]APIKey, error) {
 }
 
 func (s *Store) CreateAPIKey(userID int, rawKey string) (APIKey, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return APIKey{}, err
+	}
+	defer tx.Rollback()
+
 	var count int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM api_keys WHERE user_id = ?", userID).Scan(&count); err != nil {
+	if err := tx.QueryRow("SELECT COUNT(*) FROM api_keys WHERE user_id = ?", userID).Scan(&count); err != nil {
 		return APIKey{}, err
 	}
 	if count >= maxAPIKeysPerUser {
@@ -218,8 +212,11 @@ func (s *Store) CreateAPIKey(userID int, rawKey string) (APIKey, error) {
 	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
 	hashed := hashAPIKey(rawKey)
 	prefix := apiKeyPrefix(rawKey)
-	res, err := s.db.Exec("INSERT INTO api_keys (key, key_prefix, user_id, created_at) VALUES (?, ?, ?, ?)", hashed, prefix, userID, createdAt)
+	res, err := tx.Exec("INSERT INTO api_keys (key, key_prefix, user_id, created_at) VALUES (?, ?, ?, ?)", hashed, prefix, userID, createdAt)
 	if err != nil {
+		return APIKey{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return APIKey{}, err
 	}
 	keyID, _ := res.LastInsertId()

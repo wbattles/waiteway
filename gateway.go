@@ -361,7 +361,9 @@ func (g *Gateway) purgeSessionsLoop() {
 		case <-g.stopCh:
 			return
 		case <-ticker.C:
-			_ = g.store.PurgeExpiredSessions()
+			if err := g.store.PurgeExpiredSessions(); err != nil {
+				log.Printf("waiteway failed to purge expired sessions: %v", err)
+			}
 		}
 	}
 }
