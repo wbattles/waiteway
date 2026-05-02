@@ -152,7 +152,7 @@
         if (!response.ok) throw new Error('Failed to load users');
         const users = await response.json();
         const container = document.getElementById('users-container');
-        container.innerHTML =         users.map(user => {
+        container.innerHTML = users.map(user => {
           const canChangePassword = !user.is_admin || user.id === currentUser?.id;
           const canDelete = user.id !== currentUser?.id && user.username !== 'admin';
           const canToggleRole = user.id !== currentUser?.id;
@@ -249,8 +249,7 @@
 
     async function toggleAdmin(userId, username, isCurrentlyAdmin) {
       const verb = isCurrentlyAdmin ? 'remove admin role from' : 'make admin';
-      const prompt = isCurrentlyAdmin ? `${verb} ${username}?` : `${verb} ${username}?`;
-      showConfirmModal('', prompt, async () => {
+      showConfirmModal('', `${verb} ${username}?`, async () => {
         try {
           const response = await fetch(`/api/admin/users/${userId}/admin`, {
             method: 'PATCH',

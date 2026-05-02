@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_path_prefix ON routes(path_prefix);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_name ON routes(name COLLATE NOCASE);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key);
 CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
@@ -111,8 +112,13 @@ func openStore(dbPath string) (*Store, error) {
 
 	// SQLite only supports one concurrent writer. Limit open connections to
 	// avoid SQLITE_BUSY under load while still allowing concurrent reads.
-	db.SetMaxOpenConns(2)
-	db.SetMaxIdleConns(2)
+	// In-memory databases are per-connection so they must use exactly one.
+	maxConns := 2
+	if dbPath == ":memory:" {
+		maxConns = 1
+	}
+	db.SetMaxOpenConns(maxConns)
+	db.SetMaxIdleConns(maxConns)
 
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()

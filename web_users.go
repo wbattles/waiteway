@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -160,8 +161,7 @@ func (g *Gateway) handleAPIMyPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := g.store.DeleteSessionsForUser(user.ID); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "failed to clear sessions")
-		return
+		log.Printf("waiteway failed to clear sessions for user %d: %v", user.ID, err)
 	}
 	clearSessionCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
@@ -310,8 +310,7 @@ func (g *Gateway) handleAPIAdminUserByID(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if err := g.store.DeleteSessionsForUser(userID); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "failed to clear sessions")
-			return
+			log.Printf("waiteway failed to clear sessions for user %d: %v", userID, err)
 		}
 		if userID == admin.ID {
 			clearSessionCookie(w, r)
