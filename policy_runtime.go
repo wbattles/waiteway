@@ -173,7 +173,7 @@ func applyResponsePolicy(policy *compiledPolicy, resp *http.Response) error {
 		if origin != "" {
 			resp.Header.Set("Access-Control-Allow-Origin", origin)
 			if origin != "*" {
-				resp.Header.Set("Vary", "Origin")
+				resp.Header.Add("Vary", "Origin")
 			}
 			if len(policy.CORSAllowMethods) > 0 {
 				resp.Header.Set("Access-Control-Allow-Methods", strings.Join(policy.CORSAllowMethods, ", "))
@@ -225,7 +225,7 @@ func applyCORSPreflight(policy *compiledPolicy, w http.ResponseWriter, r *http.R
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
 	if origin != "*" {
-		w.Header().Set("Vary", "Origin")
+		w.Header().Add("Vary", "Origin")
 	}
 	if len(policy.CORSAllowMethods) > 0 {
 		w.Header().Set("Access-Control-Allow-Methods", strings.Join(policy.CORSAllowMethods, ", "))

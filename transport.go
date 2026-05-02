@@ -90,6 +90,16 @@ func tlsConfigFromEnvironment() (*tls.Config, error) {
 	pool, err := x509.SystemCertPool()
 	if err != nil || pool == nil {
 		pool = x509.NewCertPool()
+		for _, p := range []string{
+			"/etc/ssl/certs/ca-certificates.crt",
+			"/etc/pki/tls/certs/ca-bundle.crt",
+			"/etc/ssl/cert.pem",
+		} {
+			if pem, err := os.ReadFile(p); err == nil {
+				pool.AppendCertsFromPEM(pem)
+				break
+			}
+		}
 	}
 
 	pem, err := os.ReadFile(path)

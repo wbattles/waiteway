@@ -259,7 +259,8 @@ func (g *Gateway) handleAPIAdminUsers(w http.ResponseWriter, r *http.Request) {
 				writeAPIError(w, http.StatusBadRequest, "username already exists")
 				return
 			}
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			log.Printf("waiteway create user failed: %v", err)
+			writeAPIError(w, http.StatusInternalServerError, "failed to create user")
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"id": user.ID, "username": user.Username, "is_admin": user.IsAdmin, "created_at": user.CreatedAt.Format(time.RFC3339), "created_by": admin.ID})
