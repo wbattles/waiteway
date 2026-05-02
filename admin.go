@@ -359,18 +359,10 @@ func (g *Gateway) finishAdminAction(w http.ResponseWriter, r *http.Request, redi
 		log.Printf("reload config after admin change failed: %v", err)
 		config := g.currentConfig()
 		config.ActiveTab = activeTab
-		g.renderAdminForm(w, config, "", "change saved but reload failed: "+err.Error())
+		g.renderAdminForm(w, config, "change saved but reload failed: "+err.Error())
 		return
 	}
 	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
-}
-
-// silentAdminRedirect sends the admin back to a clean GET URL. Client-side
-// validation catches the common mistakes; the rare server-side failure (two
-// tabs racing, JS disabled) just returns to the admin page without polluting
-// the URL with state.
-func silentAdminRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) adminPageData(user User, errText, activeTab string) adminPageData {
@@ -420,7 +412,7 @@ func (g *Gateway) renderAdminError(w http.ResponseWriter, message string) {
 	g.renderAdminPage(w, g.adminPageData(User{}, message, "gateway"), http.StatusBadRequest)
 }
 
-func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, _ string, errText string) {
+func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, errText string) {
 	data := g.adminPageData(User{IsAdmin: true}, errText, config.ActiveTab)
 	data.LogLimit = config.LogLimit
 	data.LoadBalancerMode = config.LoadBalancer.Mode

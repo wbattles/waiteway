@@ -17,13 +17,13 @@ func (g *Gateway) handleAdminSaveLogging(w http.ResponseWriter, r *http.Request)
 	config, err := loggingConfigFromForm(r, g.currentConfig())
 	if err != nil {
 		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
 	if err := g.saveConfig(config); err != nil {
 		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
@@ -34,13 +34,13 @@ func (g *Gateway) handleAdminSaveLoadBalancer(w http.ResponseWriter, r *http.Req
 	config, err := loadBalancerConfigFromForm(r, g.currentConfig())
 	if err != nil {
 		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
 	if err := g.saveConfig(config); err != nil {
 		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 

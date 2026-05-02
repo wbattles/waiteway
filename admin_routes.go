@@ -35,7 +35,7 @@ func (g *Gateway) handleAdminUpdateRoute(w http.ResponseWriter, r *http.Request)
 	index, err := routeIndexFromForm(r, len(config.Routes))
 	if err != nil {
 		log.Printf("waiteway update route index error: %v", err)
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
@@ -60,13 +60,13 @@ func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request)
 	index, err := routeIndexFromForm(r, len(config.Routes))
 	if err != nil {
 		config.ActiveTab = "gateway"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
 	if err := g.store.DeleteRoute(index); err != nil {
 		config.ActiveTab = "gateway"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 

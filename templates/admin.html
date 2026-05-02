@@ -866,8 +866,6 @@
       'log_limit': { title: 'edit log limit', action: 'save_logging' }
     }
 
-    var existingPolicyNames = [{{ range $index, $policy := .Policies }}{{ if $index }}, {{ end }}{{ printf "%q" $policy.Name }}{{ end }}]
-
     var policyFeatureMap = {
       'timeout': {
         cardId: 'feature-timeout',

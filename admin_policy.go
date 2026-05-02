@@ -32,7 +32,7 @@ func (g *Gateway) handleAdminUpdatePolicy(w http.ResponseWriter, r *http.Request
 	index, err := policyIndexFromForm(r, len(config.Policies))
 	if err != nil {
 		config.ActiveTab = "policy"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
@@ -59,13 +59,13 @@ func (g *Gateway) handleAdminDeletePolicy(w http.ResponseWriter, r *http.Request
 	index, err := policyIndexFromForm(r, len(config.Policies))
 	if err != nil {
 		config.ActiveTab = "policy"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
 	if err := g.store.DeletePolicy(index); err != nil {
 		config.ActiveTab = "policy"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
