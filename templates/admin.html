@@ -473,6 +473,19 @@
     </div>
   </div>
 
+  <div id="route-modal-state"
+       data-open="{{ if .RouteModal.Open }}true{{ else }}false{{ end }}"
+       data-title="{{ .RouteModal.Title }}"
+       data-action="{{ .RouteModal.Action }}"
+       data-index="{{ .RouteModal.Index }}"
+       data-name="{{ .RouteModal.Name }}"
+       data-path-prefix="{{ .RouteModal.PathPrefix }}"
+       data-target="{{ .RouteModal.Target }}"
+       data-policy-name="{{ .RouteModal.PolicyName }}"
+       data-strip-prefix="{{ if .RouteModal.StripPrefix }}true{{ else }}false{{ end }}"
+       data-error="{{ .RouteModal.Error }}"
+       hidden></div>
+
   <div id="settings-modal" class="modal hidden">
     <div class="modal-box policy-add-modal-box">
       <button type="button" class="modal-close" aria-label="close" onclick="closeSettingsModal()">✕</button>
@@ -493,6 +506,7 @@
       <button type="button" class="modal-close" aria-label="close" onclick="closePolicyModal()">✕</button>
       <h2 id="policy-modal-title">add policy</h2>
       <form id="policy-form" method="post" action="/">
+        <div id="policy-modal-error" class="modal-error hidden"></div>
         <input type="hidden" id="policy-action" name="action" value="add_policy">
         <input type="hidden" id="policy-index" name="policy_index" value="">
         <label for="policy-name">name</label>
@@ -782,6 +796,41 @@
     </div>
   </div>
 
+  <div id="policy-modal-state"
+       data-open="{{ if .PolicyModal.Open }}true{{ else }}false{{ end }}"
+       data-title="{{ .PolicyModal.Title }}"
+       data-action="{{ .PolicyModal.Action }}"
+       data-index="{{ .PolicyModal.Index }}"
+       data-name="{{ .PolicyModal.Policy.Name }}"
+       data-request-timeout-seconds="{{ .PolicyModal.Policy.RequestTimeoutSeconds }}"
+       data-retry-count="{{ .PolicyModal.Policy.RetryCount }}"
+       data-require-api-key="{{ if .PolicyModal.Policy.RequireAPIKey }}true{{ else }}false{{ end }}"
+       data-require-user-auth="{{ if .PolicyModal.Policy.RequireUserAuth }}true{{ else }}false{{ end }}"
+       data-rate-limit-requests="{{ .PolicyModal.Policy.RateLimitRequests }}"
+       data-rate-limit-window-seconds="{{ .PolicyModal.Policy.RateLimitWindowSeconds }}"
+       data-allowed-methods="{{ range $i, $item := .PolicyModal.Policy.AllowedMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-rewrite-path-prefix="{{ .PolicyModal.Policy.RewritePathPrefix }}"
+       data-add-request-headers="{{ range $i, $item := .PolicyModal.Policy.AddRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-remove-request-headers="{{ range $i, $item := .PolicyModal.Policy.RemoveRequestHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-max-payload-bytes="{{ .PolicyModal.Policy.MaxPayloadBytes }}"
+       data-request-transform-find="{{ .PolicyModal.Policy.RequestTransformFind }}"
+       data-request-transform-replace="{{ .PolicyModal.Policy.RequestTransformReplace }}"
+       data-cache-ttl-seconds="{{ .PolicyModal.Policy.CacheTTLSeconds }}"
+       data-add-response-headers="{{ range $i, $item := .PolicyModal.Policy.AddResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-remove-response-headers="{{ range $i, $item := .PolicyModal.Policy.RemoveResponseHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-response-transform-find="{{ .PolicyModal.Policy.ResponseTransformFind }}"
+       data-response-transform-replace="{{ .PolicyModal.Policy.ResponseTransformReplace }}"
+       data-max-response-bytes="{{ .PolicyModal.Policy.MaxResponseBytes }}"
+       data-cors-allow-origins="{{ range $i, $item := .PolicyModal.Policy.CORSAllowOrigins }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-cors-allow-methods="{{ range $i, $item := .PolicyModal.Policy.CORSAllowMethods }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-cors-allow-headers="{{ range $i, $item := .PolicyModal.Policy.CORSAllowHeaders }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-ip-allow-list="{{ range $i, $item := .PolicyModal.Policy.IPAllowList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-ip-block-list="{{ range $i, $item := .PolicyModal.Policy.IPBlockList }}{{ if $i }}&#10;{{ end }}{{ $item }}{{ end }}"
+       data-circuit-breaker-failures="{{ .PolicyModal.Policy.CircuitBreakerFailures }}"
+       data-circuit-breaker-reset-seconds="{{ .PolicyModal.Policy.CircuitBreakerResetSeconds }}"
+       data-error="{{ .PolicyModal.Error }}"
+       hidden></div>
+
   <div id="policy-add-modal" class="modal policy-add-modal hidden">
     <div class="modal-box">
       <button type="button" class="modal-close" aria-label="close" onclick="closePolicyAddModal()">✕</button>
@@ -818,7 +867,6 @@
     }
 
     var existingPolicyNames = [{{ range $index, $policy := .Policies }}{{ if $index }}, {{ end }}{{ printf "%q" $policy.Name }}{{ end }}]
-    var existingRoutePathPrefixes = [{{ range $index, $route := .Routes }}{{ if $index }}, {{ end }}{{ printf "%q" $route.PathPrefix }}{{ end }}]
 
     var policyFeatureMap = {
       'timeout': {
@@ -985,6 +1033,18 @@
       el.classList.add('hidden')
     }
 
+    function showPolicyError(msg) {
+      var el = document.getElementById('policy-modal-error')
+      el.textContent = msg
+      el.classList.remove('hidden')
+    }
+
+    function clearPolicyError() {
+      var el = document.getElementById('policy-modal-error')
+      el.textContent = ''
+      el.classList.add('hidden')
+    }
+
     function openAddRoute() {
       document.getElementById('route-modal-title').textContent = 'add route'
       document.getElementById('route-action').value = 'add_route'
@@ -1034,6 +1094,44 @@
       document.getElementById('route-modal').classList.add('hidden')
     }
 
+    function currentRouteRecords() {
+      var buttons = document.querySelectorAll('[data-route-index][data-route-name][data-route-path-prefix]')
+      return Array.prototype.map.call(buttons, function (button) {
+        return {
+          index: String(button.dataset.routeIndex || ''),
+          name: (button.dataset.routeName || '').trim(),
+          pathPrefix: button.dataset.routePathPrefix || ''
+        }
+      })
+    }
+
+    function currentPolicyRecords() {
+      var buttons = document.querySelectorAll('[data-policy-index][data-policy-name]')
+      return Array.prototype.map.call(buttons, function (button) {
+        return {
+          index: String(button.dataset.policyIndex || ''),
+          name: (button.dataset.policyName || '').trim()
+        }
+      })
+    }
+
+    function openPendingRouteModal() {
+      var state = document.getElementById('route-modal-state')
+      if (!state || state.dataset.open !== 'true') return
+      document.getElementById('route-modal-title').textContent = state.dataset.title || 'add route'
+      document.getElementById('route-action').value = state.dataset.action || 'add_route'
+      document.getElementById('route-index').value = state.dataset.index || ''
+      document.getElementById('route-name').value = state.dataset.name || ''
+      document.getElementById('route-path-prefix').value = state.dataset.pathPrefix || ''
+      document.getElementById('route-target').value = state.dataset.target || ''
+      document.getElementById('route-policy-name').value = state.dataset.policyName || ''
+      document.getElementById('route-strip-prefix').value = state.dataset.stripPrefix || 'false'
+      clearRouteError()
+      enableFormFields('route-form')
+      document.getElementById('route-modal').classList.remove('hidden')
+      if (state.dataset.error) showRouteError(state.dataset.error)
+    }
+
     function setFormReadOnly(formId) {
       var form = document.getElementById(formId)
       form.querySelectorAll('input, textarea, select').forEach(function (el) { el.disabled = true })
@@ -1071,6 +1169,8 @@
 
     loadFont()
     loadMode()
+    openPendingRouteModal()
+    openPendingPolicyModal()
 
     function openAddPolicy() {
       document.getElementById('policy-modal-title').textContent = 'add policy'
@@ -1078,6 +1178,7 @@
       document.getElementById('policy-index').value = ''
       document.getElementById('policy-name').value = ''
       resetPolicyFeatures()
+      clearPolicyError()
       enableFormFields('policy-form')
       document.querySelector('.policy-builder-actions button').style.display = ''
       document.querySelectorAll('.policy-feature-header button').forEach(function (btn) { btn.style.display = '' })
@@ -1117,10 +1218,43 @@
       syncPolicyFeaturesFromValues()
     }
 
+    function populatePolicyFromState(state) {
+      document.getElementById('policy-index').value = state.dataset.index || ''
+      document.getElementById('policy-name').value = state.dataset.name || ''
+      document.getElementById('policy-request-timeout-seconds').value = state.dataset.requestTimeoutSeconds || ''
+      document.getElementById('policy-retry-count').value = state.dataset.retryCount || ''
+      document.getElementById('policy-require-api-key').value = state.dataset.requireApiKey || 'false'
+      document.getElementById('policy-require-user-auth').value = state.dataset.requireUserAuth || 'false'
+      document.getElementById('policy-rate-limit-requests').value = state.dataset.rateLimitRequests || ''
+      document.getElementById('policy-rate-limit-window-seconds').value = state.dataset.rateLimitWindowSeconds || ''
+      document.getElementById('policy-allowed-methods').value = state.dataset.allowedMethods || ''
+      document.getElementById('policy-rewrite-path-prefix').value = state.dataset.rewritePathPrefix || ''
+      document.getElementById('policy-add-request-headers').value = state.dataset.addRequestHeaders || ''
+      document.getElementById('policy-remove-request-headers').value = state.dataset.removeRequestHeaders || ''
+      document.getElementById('policy-max-payload-bytes').value = state.dataset.maxPayloadBytes || ''
+      document.getElementById('policy-request-transform-find').value = state.dataset.requestTransformFind || ''
+      document.getElementById('policy-request-transform-replace').value = state.dataset.requestTransformReplace || ''
+      document.getElementById('policy-cache-ttl-seconds').value = state.dataset.cacheTtlSeconds || ''
+      document.getElementById('policy-add-response-headers').value = state.dataset.addResponseHeaders || ''
+      document.getElementById('policy-remove-response-headers').value = state.dataset.removeResponseHeaders || ''
+      document.getElementById('policy-response-transform-find').value = state.dataset.responseTransformFind || ''
+      document.getElementById('policy-response-transform-replace').value = state.dataset.responseTransformReplace || ''
+      document.getElementById('policy-max-response-bytes').value = state.dataset.maxResponseBytes || ''
+      document.getElementById('policy-cors-allow-origins').value = state.dataset.corsAllowOrigins || ''
+      document.getElementById('policy-cors-allow-methods').value = state.dataset.corsAllowMethods || ''
+      document.getElementById('policy-cors-allow-headers').value = state.dataset.corsAllowHeaders || ''
+      document.getElementById('policy-ip-allow-list').value = state.dataset.ipAllowList || ''
+      document.getElementById('policy-ip-block-list').value = state.dataset.ipBlockList || ''
+      document.getElementById('policy-circuit-breaker-failures').value = state.dataset.circuitBreakerFailures || ''
+      document.getElementById('policy-circuit-breaker-reset-seconds').value = state.dataset.circuitBreakerResetSeconds || ''
+      syncPolicyFeaturesFromValues()
+    }
+
     function openEditPolicyButton(button) {
       document.getElementById('policy-modal-title').textContent = 'edit policy'
       document.getElementById('policy-action').value = 'update_policy'
       populatePolicyFromButton(button)
+      clearPolicyError()
       enableFormFields('policy-form')
       document.querySelector('.policy-builder-actions button').style.display = ''
       document.querySelectorAll('.policy-feature-header button').forEach(function (btn) { btn.style.display = '' })
@@ -1131,6 +1265,7 @@
       document.getElementById('policy-modal-title').textContent = 'view policy'
       document.getElementById('policy-action').value = ''
       populatePolicyFromButton(button)
+      clearPolicyError()
       setFormReadOnly('policy-form')
       document.querySelector('.policy-builder-actions button').style.display = 'none'
       document.querySelectorAll('.policy-feature-header button').forEach(function (btn) { btn.style.display = 'none' })
@@ -1138,8 +1273,23 @@
     }
 
     function closePolicyModal() {
+      clearPolicyError()
       document.getElementById('policy-modal').classList.add('hidden')
       closePolicyAddModal()
+    }
+
+    function openPendingPolicyModal() {
+      var state = document.getElementById('policy-modal-state')
+      if (!state || state.dataset.open !== 'true') return
+      document.getElementById('policy-modal-title').textContent = state.dataset.title || 'add policy'
+      document.getElementById('policy-action').value = state.dataset.action || 'add_policy'
+      populatePolicyFromState(state)
+      clearPolicyError()
+      enableFormFields('policy-form')
+      document.querySelector('.policy-builder-actions button').style.display = ''
+      document.querySelectorAll('.policy-feature-header button').forEach(function (btn) { btn.style.display = '' })
+      document.getElementById('policy-modal').classList.remove('hidden')
+      if (state.dataset.error) showPolicyError(state.dataset.error)
     }
 
     function openPolicyAddModal() {
@@ -1268,13 +1418,14 @@
       var nameInput = document.getElementById('policy-name')
       var nextName = nameInput.value.trim().toLowerCase()
       var currentIndex = document.getElementById('policy-index').value
-      var duplicate = existingPolicyNames.some(function (name, index) {
-        if (currentIndex !== '' && String(index) === currentIndex) return false
-        return name.trim().toLowerCase() === nextName
+      clearPolicyError()
+      var duplicate = currentPolicyRecords().some(function (policy) {
+        if (currentIndex !== '' && policy.index === currentIndex) return false
+        return policy.name.toLowerCase() === nextName
       })
       if (!duplicate) return
       event.preventDefault()
-      window.alert('policy name already exists')
+      showPolicyError('policy name already exists')
     })
 
     function normalizeRoutePathPrefix(value) {
@@ -1289,6 +1440,7 @@
 
     document.getElementById('route-form').addEventListener('submit', function (event) {
       var name = document.getElementById('route-name').value.trim()
+      var normalizedName = name.toLowerCase()
       var prefix = normalizeRoutePathPrefix(document.getElementById('route-path-prefix').value)
       var target = document.getElementById('route-target').value.trim()
       var currentIndex = document.getElementById('route-index').value
@@ -1305,9 +1457,19 @@
         return
       }
 
-      var duplicate = existingRoutePathPrefixes.some(function (existing, index) {
-        if (currentIndex !== '' && String(index) === currentIndex) return false
-        return existing === prefix
+      var duplicateName = currentRouteRecords().some(function (route) {
+        if (currentIndex !== '' && route.index === currentIndex) return false
+        return route.name.toLowerCase() === normalizedName
+      })
+      if (duplicateName) {
+        event.preventDefault()
+        showRouteError('route name already exists')
+        return
+      }
+
+      var duplicate = currentRouteRecords().some(function (route) {
+        if (currentIndex !== '' && route.index === currentIndex) return false
+        return route.pathPrefix === prefix
       })
       if (duplicate) {
         event.preventDefault()

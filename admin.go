@@ -35,6 +35,30 @@ type adminPageData struct {
 	RouteStats            []routeStat
 	Uptime                string
 	Error                 string
+	RouteModal            routeModalState
+	PolicyModal           policyModalState
+}
+
+type routeModalState struct {
+	Open        bool
+	Title       string
+	Action      string
+	Index       string
+	Name        string
+	PathPrefix  string
+	Target      string
+	PolicyName  string
+	StripPrefix bool
+	Error       string
+}
+
+type policyModalState struct {
+	Open   bool
+	Title  string
+	Action string
+	Index  string
+	Policy Policy
+	Error  string
 }
 
 type logStats struct {
@@ -406,6 +430,52 @@ func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, _ string
 	data.Policies = config.Policies
 	data.Routes = config.Routes
 	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
+	g.renderAdminPage(w, data, http.StatusBadRequest)
+}
+
+func (g *Gateway) renderAdminRouteForm(w http.ResponseWriter, config Config, route Route, title, action, index, errText string) {
+	data := g.adminPageData(User{IsAdmin: true}, "", config.ActiveTab)
+	data.LogLimit = config.LogLimit
+	data.LoadBalancerMode = config.LoadBalancer.Mode
+	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader
+	data.LoadBalancerHeaders = strings.Join(clientIPHeaderChain(config.LoadBalancer), " → ")
+	data.LoadBalancerStripPort = config.LoadBalancer.StripPort
+	data.Policies = config.Policies
+	data.Routes = config.Routes
+	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
+	data.RouteModal = routeModalState{
+		Open:        true,
+		Title:       title,
+		Action:      action,
+		Index:       index,
+		Name:        route.Name,
+		PathPrefix:  route.PathPrefix,
+		Target:      route.Target,
+		PolicyName:  route.PolicyName,
+		StripPrefix: route.StripPrefix,
+		Error:       errText,
+	}
+	g.renderAdminPage(w, data, http.StatusBadRequest)
+}
+
+func (g *Gateway) renderAdminPolicyForm(w http.ResponseWriter, config Config, policy Policy, title, action, index, errText string) {
+	data := g.adminPageData(User{IsAdmin: true}, "", config.ActiveTab)
+	data.LogLimit = config.LogLimit
+	data.LoadBalancerMode = config.LoadBalancer.Mode
+	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader
+	data.LoadBalancerHeaders = strings.Join(clientIPHeaderChain(config.LoadBalancer), " → ")
+	data.LoadBalancerStripPort = config.LoadBalancer.StripPort
+	data.Policies = config.Policies
+	data.Routes = config.Routes
+	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
+	data.PolicyModal = policyModalState{
+		Open:   true,
+		Title:  title,
+		Action: action,
+		Index:  index,
+		Policy: policy,
+		Error:  errText,
+	}
 	g.renderAdminPage(w, data, http.StatusBadRequest)
 }
 

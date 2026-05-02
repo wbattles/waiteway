@@ -232,6 +232,26 @@ func duplicateRoutePathPrefixError(prefix string) error {
 	return fmt.Errorf("route path prefix %q is already in use", prefix)
 }
 
+func duplicateRouteNameError(name string) error {
+	return fmt.Errorf("route name %q is already in use", name)
+}
+
+func routeNameExistsTx(tx *sql.Tx, name string, excludeID int) (bool, error) {
+	query := "SELECT COUNT(*) FROM routes WHERE lower(name) = lower(?)"
+	args := []any{strings.TrimSpace(name)}
+	if excludeID > 0 {
+		query += " AND id != ?"
+		args = append(args, excludeID)
+	}
+
+	var count int
+	if err := tx.QueryRow(query, args...).Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
 func routePathPrefixExistsTx(tx *sql.Tx, prefix string, excludeID int) (bool, error) {
 	query := "SELECT COUNT(*) FROM routes WHERE path_prefix = ?"
 	args := []any{prefix}
@@ -263,6 +283,14 @@ func (s *Store) AddRoute(r Route) error {
 	}
 	if exists {
 		return duplicateRoutePathPrefixError(r.PathPrefix)
+	}
+
+	exists, err = routeNameExistsTx(tx, r.Name, 0)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return duplicateRouteNameError(r.Name)
 	}
 
 	var maxPos int
@@ -298,6 +326,14 @@ func (s *Store) UpdateRoute(index int, r Route) error {
 	}
 	if exists {
 		return duplicateRoutePathPrefixError(r.PathPrefix)
+	}
+
+	exists, err = routeNameExistsTx(tx, r.Name, id)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return duplicateRouteNameError(r.Name)
 	}
 
 	if _, err := tx.Exec(

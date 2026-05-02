@@ -11,16 +11,18 @@ import (
 )
 
 func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
+	config := g.currentConfig()
+	config.ActiveTab = "gateway"
 	route, err := routeFromForm(r)
 	if err != nil {
 		log.Printf("waiteway add route form error: %v", err)
-		silentAdminRedirect(w, r)
+		g.renderAdminRouteForm(w, config, route, "add route", "add_route", "", err.Error())
 		return
 	}
 
 	if err := g.store.AddRoute(route); err != nil {
 		log.Printf("waiteway add route store error: %v", err)
-		silentAdminRedirect(w, r)
+		g.renderAdminRouteForm(w, config, route, "add route", "add_route", "", err.Error())
 		return
 	}
 
@@ -29,23 +31,24 @@ func (g *Gateway) handleAdminAddRoute(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleAdminUpdateRoute(w http.ResponseWriter, r *http.Request) {
 	config := g.currentConfig()
+	config.ActiveTab = "gateway"
 	index, err := routeIndexFromForm(r, len(config.Routes))
 	if err != nil {
 		log.Printf("waiteway update route index error: %v", err)
-		silentAdminRedirect(w, r)
+		g.renderAdminForm(w, config, "", err.Error())
 		return
 	}
 
 	route, err := routeFromForm(r)
 	if err != nil {
 		log.Printf("waiteway update route form error: %v", err)
-		silentAdminRedirect(w, r)
+		g.renderAdminRouteForm(w, config, route, "edit route", "update_route", strconv.Itoa(index), err.Error())
 		return
 	}
 
 	if err := g.store.UpdateRoute(index, route); err != nil {
 		log.Printf("waiteway update route store error: %v", err)
-		silentAdminRedirect(w, r)
+		g.renderAdminRouteForm(w, config, route, "edit route", "update_route", strconv.Itoa(index), err.Error())
 		return
 	}
 
