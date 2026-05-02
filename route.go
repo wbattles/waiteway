@@ -13,9 +13,8 @@ import (
 
 type compiledRoute struct {
 	Route
-	proxy   *httputil.ReverseProxy
-	apiKeys map[string]struct{}
-	policy  *compiledPolicy
+	proxy  *httputil.ReverseProxy
+	policy *compiledPolicy
 }
 
 type routeMatcher struct {
@@ -51,14 +50,6 @@ func compileConfig(config Config) ([]compiledRoute, error) {
 			return nil, fmt.Errorf("parse target %q: %w", route.Target, err)
 		}
 
-		routeAPIKeys := make(map[string]struct{}, len(route.APIKeys))
-		for _, key := range route.APIKeys {
-			if key == "" {
-				continue
-			}
-			routeAPIKeys[key] = struct{}{}
-		}
-
 		var policyRef *compiledPolicy
 		if route.PolicyName != "" {
 			var ok bool
@@ -73,10 +64,9 @@ func compileConfig(config Config) ([]compiledRoute, error) {
 			return nil, fmt.Errorf("build proxy for route %q: %w", route.Name, err)
 		}
 		routes = append(routes, compiledRoute{
-			Route:   route,
-			proxy:   proxy,
-			apiKeys: routeAPIKeys,
-			policy:  policyRef,
+			Route:  route,
+			proxy:  proxy,
+			policy: policyRef,
 		})
 	}
 
@@ -190,16 +180,8 @@ func (g *Gateway) matchRoute(path string) (compiledRoute, bool) {
 	return compiledRoute{}, false
 }
 
-func (g *Gateway) authorizeAPIKey(route compiledRoute, key string) bool {
-	if len(route.apiKeys) == 0 {
-		return false
-	}
-	_, ok := route.apiKeys[key]
-	return ok
-}
-
 func routeNeedsAPIKey(route compiledRoute) bool {
-	return route.RequireAPIKey || (route.policy != nil && route.policy.RequireAPIKey)
+	return route.policy != nil && route.policy.RequireAPIKey
 }
 
 func routeNeedsClientAddr(route compiledRoute) bool {

@@ -12,8 +12,13 @@ type rateLimiter struct {
 	mu      sync.Mutex
 	limit   int
 	window  time.Duration
-	entries map[string][]time.Time
+	entries map[string]*rateLimiterEntry
 	calls   int
+}
+
+type rateLimiterEntry struct {
+	count    int
+	windowStart time.Time
 }
 
 // rateLimiterSweepEvery controls how often Allow sweeps expired keys out of
@@ -24,33 +29,36 @@ func (r *rateLimiter) Allow(key string, now time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	cutoff := now.Add(-r.window)
-
 	r.calls++
 	if r.calls >= rateLimiterSweepEvery {
 		r.calls = 0
-		for k, hits := range r.entries {
+		for k, entry := range r.entries {
 			if k == key {
 				continue
 			}
-			if len(hits) == 0 || !hits[len(hits)-1].After(cutoff) {
+			if now.Sub(entry.windowStart) >= r.window {
 				delete(r.entries, k)
 			}
 		}
 	}
 
-	hits := r.entries[key]
-	kept := hits[:0]
-	for _, hit := range hits {
-		if hit.After(cutoff) {
-			kept = append(kept, hit)
-		}
+	entry := r.entries[key]
+	if entry == nil {
+		r.entries[key] = &rateLimiterEntry{count: 1, windowStart: now}
+		return true
 	}
-	if len(kept) >= r.limit {
-		r.entries[key] = kept
+
+	// If the window expired, start a new one.
+	if now.Sub(entry.windowStart) >= r.window {
+		entry.count = 1
+		entry.windowStart = now
+		return true
+	}
+
+	if entry.count >= r.limit {
 		return false
 	}
-	r.entries[key] = append(kept, now)
+	entry.count++
 	return true
 }
 

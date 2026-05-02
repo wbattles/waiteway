@@ -107,6 +107,26 @@ func TestStoreAddRouteRejectsDuplicateRoutePathPrefixes(t *testing.T) {
 	}
 }
 
+func TestStoreAddRouteRejectsDuplicateRouteNames(t *testing.T) {
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	if err := store.AddRoute(Route{Name: "first", PathPrefix: "/example", Target: "https://example.com"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.AddRoute(Route{Name: "first", PathPrefix: "/other", Target: "https://other-example.com"})
+	if err == nil {
+		t.Fatal("expected duplicate route name error")
+	}
+	if !strings.Contains(err.Error(), "route name") {
+		t.Fatalf("expected duplicate route name error, got %v", err)
+	}
+}
+
 func TestStoreUpdateRouteRejectsDuplicateRoutePathPrefixes(t *testing.T) {
 	store, err := openStore(":memory:")
 	if err != nil {
@@ -127,6 +147,29 @@ func TestStoreUpdateRouteRejectsDuplicateRoutePathPrefixes(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already in use") {
 		t.Fatalf("expected duplicate prefix error, got %v", err)
+	}
+}
+
+func TestStoreUpdateRouteRejectsDuplicateRouteNames(t *testing.T) {
+	store, err := openStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	if err := store.AddRoute(Route{Name: "first", PathPrefix: "/example", Target: "https://example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddRoute(Route{Name: "second", PathPrefix: "/other", Target: "https://other-example.com"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.UpdateRoute(1, Route{Name: "first", PathPrefix: "/other", Target: "https://other-example.com"})
+	if err == nil {
+		t.Fatal("expected duplicate route name error")
+	}
+	if !strings.Contains(err.Error(), "route name") {
+		t.Fatalf("expected duplicate route name error, got %v", err)
 	}
 }
 
@@ -250,4 +293,3 @@ func TestStoreAddRouteNormalizesBeforeDuplicateCheck(t *testing.T) {
 		t.Fatalf("expected duplicate prefix error, got %v", err)
 	}
 }
-

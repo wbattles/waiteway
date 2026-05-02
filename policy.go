@@ -89,7 +89,7 @@ func compilePolicy(policy Policy) (*compiledPolicy, error) {
 		compiled.rateLimiter = &rateLimiter{
 			limit:   policy.RateLimitRequests,
 			window:  time.Duration(policy.RateLimitWindowSeconds) * time.Second,
-			entries: map[string][]time.Time{},
+			entries: map[string]*rateLimiterEntry{},
 		}
 	}
 
@@ -162,9 +162,6 @@ func parsePrefixes(values []string) ([]netip.Prefix, error) {
 func routePolicyLabel(route Route) string {
 	if route.PolicyName != "" {
 		return route.PolicyName
-	}
-	if route.RequireAPIKey {
-		return "legacy api key"
 	}
 	return "none"
 }

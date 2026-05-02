@@ -88,14 +88,6 @@ func (g *Gateway) authorizePolicyUserAuth(policy *compiledPolicy, username, pass
 	return true
 }
 
-func (g *Gateway) authorizeRouteAPIKey(route compiledRoute, key string, _ User, hasRequestUser bool) bool {
-	if len(route.apiKeys) == 0 {
-		return hasRequestUser
-	}
-	_, ok := route.apiKeys[key]
-	return ok
-}
-
 func (g *Gateway) cachedPolicyResponse(route compiledRoute, key string, now time.Time) (cachedResponse, bool) {
 	if route.policy == nil || route.policy.cache == nil || key == "" || now.IsZero() {
 		return cachedResponse{}, false
@@ -176,17 +168,19 @@ func applyResponsePolicy(policy *compiledPolicy, resp *http.Response) error {
 		resp.Header.Set(key, value)
 	}
 
-	if len(policy.CORSAllowOrigins) > 0 {
-		origin := "*"
-		if len(policy.CORSAllowOrigins) == 1 {
-			origin = policy.CORSAllowOrigins[0]
-		}
-		resp.Header.Set("Access-Control-Allow-Origin", origin)
-		if len(policy.CORSAllowMethods) > 0 {
-			resp.Header.Set("Access-Control-Allow-Methods", strings.Join(policy.CORSAllowMethods, ", "))
-		}
-		if len(policy.CORSAllowHeaders) > 0 {
-			resp.Header.Set("Access-Control-Allow-Headers", strings.Join(policy.CORSAllowHeaders, ", "))
+	if len(policy.CORSAllowOrigins) > 0 && resp.Request != nil {
+		origin := matchCORSOrigin(policy.CORSAllowOrigins, resp.Request.Header.Get("Origin"))
+		if origin != "" {
+			resp.Header.Set("Access-Control-Allow-Origin", origin)
+			if origin != "*" {
+				resp.Header.Add("Vary", "Origin")
+			}
+			if len(policy.CORSAllowMethods) > 0 {
+				resp.Header.Set("Access-Control-Allow-Methods", strings.Join(policy.CORSAllowMethods, ", "))
+			}
+			if len(policy.CORSAllowHeaders) > 0 {
+				resp.Header.Set("Access-Control-Allow-Headers", strings.Join(policy.CORSAllowHeaders, ", "))
+			}
 		}
 	}
 
@@ -225,11 +219,14 @@ func applyCORSPreflight(policy *compiledPolicy, w http.ResponseWriter, r *http.R
 	if r.Method != http.MethodOptions || r.Header.Get("Origin") == "" {
 		return false
 	}
-	origin := "*"
-	if len(policy.CORSAllowOrigins) == 1 {
-		origin = policy.CORSAllowOrigins[0]
+	origin := matchCORSOrigin(policy.CORSAllowOrigins, r.Header.Get("Origin"))
+	if origin == "" {
+		return false
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
+	if origin != "*" {
+		w.Header().Add("Vary", "Origin")
+	}
 	if len(policy.CORSAllowMethods) > 0 {
 		w.Header().Set("Access-Control-Allow-Methods", strings.Join(policy.CORSAllowMethods, ", "))
 	}
@@ -238,6 +235,22 @@ func applyCORSPreflight(policy *compiledPolicy, w http.ResponseWriter, r *http.R
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return true
+}
+
+// matchCORSOrigin returns the origin to set in the response header. If the
+// allow list contains "*", it returns "*". Otherwise it checks whether the
+// request origin is in the allow list and reflects it back. Returns "" if the
+// origin is not allowed.
+func matchCORSOrigin(allowed []string, requestOrigin string) string {
+	for _, o := range allowed {
+		if o == "*" {
+			return "*"
+		}
+		if strings.EqualFold(o, requestOrigin) {
+			return requestOrigin
+		}
+	}
+	return ""
 }
 
 func requestWithPolicyContext(r *http.Request, policy *compiledPolicy) (*http.Request, context.CancelFunc) {

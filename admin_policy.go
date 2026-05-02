@@ -12,14 +12,15 @@ func (g *Gateway) handleAdminAddPolicy(w http.ResponseWriter, r *http.Request) {
 	policy, err := policyFromForm(r)
 	if err != nil {
 		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
-		g.renderAdminForm(w, config, "", err.Error())
+		config.ActiveTab = "policy"
+		g.renderAdminPolicyForm(w, config, policy, "add policy", "add_policy", "", err.Error())
 		return
 	}
 
 	if err := g.store.AddPolicy(policy); err != nil {
 		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
 		config.ActiveTab = "policy"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminPolicyForm(w, config, policy, "add policy", "add_policy", "", err.Error())
 		return
 	}
 
@@ -31,7 +32,7 @@ func (g *Gateway) handleAdminUpdatePolicy(w http.ResponseWriter, r *http.Request
 	index, err := policyIndexFromForm(r, len(config.Policies))
 	if err != nil {
 		config.ActiveTab = "policy"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
@@ -39,14 +40,14 @@ func (g *Gateway) handleAdminUpdatePolicy(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
 		config.ActiveTab = "policy"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminPolicyForm(w, config, policy, "edit policy", "update_policy", strconv.Itoa(index), err.Error())
 		return
 	}
 
 	if err := g.store.UpdatePolicy(index, policy); err != nil {
 		config.Policies = policiesFromFormOrCurrent(r, config.Policies)
 		config.ActiveTab = "policy"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminPolicyForm(w, config, policy, "edit policy", "update_policy", strconv.Itoa(index), err.Error())
 		return
 	}
 
@@ -58,13 +59,13 @@ func (g *Gateway) handleAdminDeletePolicy(w http.ResponseWriter, r *http.Request
 	index, err := policyIndexFromForm(r, len(config.Policies))
 	if err != nil {
 		config.ActiveTab = "policy"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
 	if err := g.store.DeletePolicy(index); err != nil {
 		config.ActiveTab = "policy"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 

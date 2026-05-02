@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,66 +13,17 @@ func (g *Gateway) handleAdminClearLogs(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/?tab=config", http.StatusSeeOther)
 }
 
-func (g *Gateway) handleAdminSaveSettings(w http.ResponseWriter, r *http.Request) {
-	config, err := settingsConfigFromForm(r, g.currentConfig())
-	if err != nil {
-		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
-		return
-	}
-
-	if err := g.saveConfig(config); err != nil {
-		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
-		return
-	}
-
-	http.Redirect(w, r, "/?tab=config", http.StatusSeeOther)
-}
-
-func (g *Gateway) handleAdminChangePassword(w http.ResponseWriter, r *http.Request) {
-	config := g.currentConfig()
-	currentPassword := r.FormValue("current_password")
-	newPassword := r.FormValue("new_password")
-
-	if currentPassword != config.Admin.Password {
-		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", "current password is wrong")
-		return
-	}
-	if strings.TrimSpace(newPassword) == "" {
-		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", "new password is required")
-		return
-	}
-
-	config.Admin.Password = newPassword
-	if err := g.saveConfig(config); err != nil {
-		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
-		return
-	}
-
-	// New password invalidates every existing session so old cookies
-	// cannot be reused. The admin will be sent back to the login page.
-	if err := g.store.DeleteAllSessions(); err != nil {
-		log.Printf("clear sessions after password change failed: %v", err)
-	}
-
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
-}
-
 func (g *Gateway) handleAdminSaveLogging(w http.ResponseWriter, r *http.Request) {
 	config, err := loggingConfigFromForm(r, g.currentConfig())
 	if err != nil {
 		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
 	if err := g.saveConfig(config); err != nil {
 		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
@@ -84,38 +34,18 @@ func (g *Gateway) handleAdminSaveLoadBalancer(w http.ResponseWriter, r *http.Req
 	config, err := loadBalancerConfigFromForm(r, g.currentConfig())
 	if err != nil {
 		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
 	if err := g.saveConfig(config); err != nil {
 		config.ActiveTab = "config"
-		g.renderAdminForm(w, config, "", err.Error())
+		g.renderAdminForm(w, config, err.Error())
 		return
 	}
 
 	tab := normalizeAdminTab(r.URL.Query().Get("tab"))
 	http.Redirect(w, r, "/?tab="+tab, http.StatusSeeOther)
-}
-
-func settingsConfigFromForm(r *http.Request, current Config) (Config, error) {
-	username := strings.TrimSpace(r.FormValue("admin_username"))
-	if username == "" {
-		username = current.Admin.Username
-	}
-
-	config := Config{
-		Admin: AdminConfig{
-			Username: username,
-			Password: current.Admin.Password,
-		},
-		LogLimit:     current.LogLimit,
-		LoadBalancer: current.LoadBalancer,
-		Policies:     current.Policies,
-		Routes:       current.Routes,
-	}
-
-	return config, nil
 }
 
 func loggingConfigFromForm(r *http.Request, current Config) (Config, error) {

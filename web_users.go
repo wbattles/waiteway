@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -154,6 +156,10 @@ func (g *Gateway) handleAPIMyPassword(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "failed to update password")
 		return
 	}
+	if err := g.store.DeleteSessionsForUser(user.ID); err != nil {
+		log.Printf("waiteway failed to clear sessions for user %d: %v", user.ID, err)
+	}
+	clearSessionCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
 }
 
@@ -186,6 +192,10 @@ func (g *Gateway) handleAPIMyAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		key, err := g.store.CreateAPIKey(user.ID, rawKey)
 		if err != nil {
+			if errors.Is(err, ErrAPIKeyLimitReached) {
+				writeAPIError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 			writeAPIError(w, http.StatusInternalServerError, "failed to create api key")
 			return
 		}
@@ -239,13 +249,18 @@ func (g *Gateway) handleAPIAdminUsers(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if len(strings.TrimSpace(req.Username)) > 15 {
-			writeAPIError(w, http.StatusBadRequest, "username must be 15 characters or less")
+		if _, err := normalizeUsername(req.Username); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		user, err := g.store.CreateUser(req.Username, req.Password, req.IsAdmin)
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, "failed to create user")
+			if errors.Is(err, ErrUsernameTaken) {
+				writeAPIError(w, http.StatusBadRequest, "username already exists")
+				return
+			}
+			log.Printf("waiteway create user failed: %v", err)
+			writeAPIError(w, http.StatusInternalServerError, "failed to create user")
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"id": user.ID, "username": user.Username, "is_admin": user.IsAdmin, "created_at": user.CreatedAt.Format(time.RFC3339), "created_by": admin.ID})
@@ -290,6 +305,12 @@ func (g *Gateway) handleAPIAdminUserByID(w http.ResponseWriter, r *http.Request)
 		if err := g.store.UpdateUserPassword(userID, req.NewPassword); err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "failed to update password")
 			return
+		}
+		if err := g.store.DeleteSessionsForUser(userID); err != nil {
+			log.Printf("waiteway failed to clear sessions for user %d: %v", userID, err)
+		}
+		if userID == admin.ID {
+			clearSessionCookie(w, r)
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
 		return

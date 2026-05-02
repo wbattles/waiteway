@@ -105,14 +105,20 @@ If you use kube-prometheus-stack or another Prometheus Operator setup, enable th
 
 ### Settings tab
 
-Change admin username, password, and log limit.
+Change your password, manage api keys, log limit, and load balancer mode.
+
+## Users
+
+Manage users on the admin page (admins only). Each user logs in with their own username and password. Promote or demote admins from the same page.
+
+The first admin is created on startup if no users exist. Set `WAITEWAY_ADMIN_USERNAME` and `WAITEWAY_ADMIN_PASSWORD` to control this. Both env vars are only used to seed the first admin — change the password through the UI afterwards.
 
 ## Environment variables
 
 | variable | default | description |
 |---|---|---|
-| `WAITEWAY_ADMIN_USERNAME` | `admin` | admin username |
-| `WAITEWAY_ADMIN_PASSWORD` | `change-me` | admin password |
+| `WAITEWAY_ADMIN_USERNAME` | `admin` | first admin username (only used on first run) |
+| `WAITEWAY_ADMIN_PASSWORD` | `change-me` | first admin password (only used on first run) |
 | `WAITEWAY_LISTEN` | `:8080` | gateway listen address |
 | `WAITEWAY_ADMIN_LISTEN` | `:9090` | admin listen address |
 | `WAITEWAY_CA_CERT` | unset | path to a PEM file with extra root certs (see [Private certificates](#private-certificates)) |

@@ -18,7 +18,6 @@ import (
 type adminPageData struct {
 	CurrentUser           User
 	IsAdmin               bool
-	AdminUsername         string
 	LogLimit              int
 	LoadBalancerMode      string
 	LoadBalancerHeader    string
@@ -36,6 +35,30 @@ type adminPageData struct {
 	RouteStats            []routeStat
 	Uptime                string
 	Error                 string
+	RouteModal            routeModalState
+	PolicyModal           policyModalState
+}
+
+type routeModalState struct {
+	Open        bool
+	Title       string
+	Action      string
+	Index       string
+	Name        string
+	PathPrefix  string
+	Target      string
+	PolicyName  string
+	StripPrefix bool
+	Error       string
+}
+
+type policyModalState struct {
+	Open   bool
+	Title  string
+	Action string
+	Index  string
+	Policy Policy
+	Error  string
 }
 
 type logStats struct {
@@ -99,10 +122,6 @@ func (g *Gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	if !user.IsAdmin {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
 
 	if r.Method == http.MethodPost {
 		g.handleAdminPost(w, r)
@@ -153,13 +172,7 @@ func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "waiteway_session",
-		Value:    sessionID,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	setSessionCookie(w, r, sessionID)
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -174,13 +187,7 @@ func (g *Gateway) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 		g.store.DeleteSession(cookie.Value)
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "waiteway_session",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		MaxAge:   -1,
-	})
+	clearSessionCookie(w, r)
 
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
@@ -210,18 +217,6 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		g.handleAdminDeletePolicy(w, r)
-	case "save_settings":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
-		g.handleAdminSaveSettings(w, r)
-	case "change_password":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
-		g.handleAdminChangePassword(w, r)
 	case "save_logging":
 		if !g.authorizeAdmin(r) {
 			g.renderAdminError(w, "admin access required")
@@ -288,6 +283,42 @@ func newSessionID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+func requestIsSecure(r *http.Request) bool {
+	if r != nil && r.TLS != nil {
+		return true
+	}
+	if r != nil && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
+		return true
+	}
+	return false
+}
+
+func setSessionCookie(w http.ResponseWriter, r *http.Request, sessionID string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "waiteway_session",
+		Value:    sessionID,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsSecure(r),
+		MaxAge:   int(sessionMaxAge.Seconds()),
+		Expires:  time.Now().Add(sessionMaxAge),
+	})
+}
+
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "waiteway_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsSecure(r),
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+}
+
 // saveConfig validates a Config, persists it, and applies the new config to
 // the running gateway. If any step fails the gateway state is left unchanged.
 func (g *Gateway) saveConfig(config Config) error {
@@ -326,18 +357,10 @@ func (g *Gateway) finishAdminAction(w http.ResponseWriter, r *http.Request, redi
 		log.Printf("reload config after admin change failed: %v", err)
 		config := g.currentConfig()
 		config.ActiveTab = activeTab
-		g.renderAdminForm(w, config, "", "change saved but reload failed: "+err.Error())
+		g.renderAdminForm(w, config, "change saved but reload failed: "+err.Error())
 		return
 	}
 	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
-}
-
-// silentAdminRedirect sends the admin back to a clean GET URL. Client-side
-// validation catches the common mistakes; the rare server-side failure (two
-// tabs racing, JS disabled) just returns to the admin page without polluting
-// the URL with state.
-func silentAdminRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (g *Gateway) adminPageData(user User, errText, activeTab string) adminPageData {
@@ -351,7 +374,7 @@ func (g *Gateway) adminPageData(user User, errText, activeTab string) adminPageD
 	openRoutes := 0
 	protectedRoutes := 0
 	for _, route := range routes {
-		if route.PolicyName != "" || route.RequireAPIKey {
+		if route.PolicyName != "" {
 			protectedRoutes++
 		} else {
 			openRoutes++
@@ -361,7 +384,6 @@ func (g *Gateway) adminPageData(user User, errText, activeTab string) adminPageD
 	data := adminPageData{
 		CurrentUser:           user,
 		IsAdmin:               user.IsAdmin,
-		AdminUsername:         config.Admin.Username,
 		LogLimit:              config.LogLimit,
 		LoadBalancerMode:      config.LoadBalancer.Mode,
 		LoadBalancerHeader:    config.LoadBalancer.ClientIPHeader,
@@ -388,9 +410,8 @@ func (g *Gateway) renderAdminError(w http.ResponseWriter, message string) {
 	g.renderAdminPage(w, g.adminPageData(User{}, message, "gateway"), http.StatusBadRequest)
 }
 
-func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, _ string, errText string) {
+func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, errText string) {
 	data := g.adminPageData(User{IsAdmin: true}, errText, config.ActiveTab)
-	data.AdminUsername = config.Admin.Username
 	data.LogLimit = config.LogLimit
 	data.LoadBalancerMode = config.LoadBalancer.Mode
 	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader
@@ -399,6 +420,52 @@ func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, _ string
 	data.Policies = config.Policies
 	data.Routes = config.Routes
 	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
+	g.renderAdminPage(w, data, http.StatusBadRequest)
+}
+
+func (g *Gateway) renderAdminRouteForm(w http.ResponseWriter, config Config, route Route, title, action, index, errText string) {
+	data := g.adminPageData(User{IsAdmin: true}, "", config.ActiveTab)
+	data.LogLimit = config.LogLimit
+	data.LoadBalancerMode = config.LoadBalancer.Mode
+	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader
+	data.LoadBalancerHeaders = strings.Join(clientIPHeaderChain(config.LoadBalancer), " → ")
+	data.LoadBalancerStripPort = config.LoadBalancer.StripPort
+	data.Policies = config.Policies
+	data.Routes = config.Routes
+	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
+	data.RouteModal = routeModalState{
+		Open:        true,
+		Title:       title,
+		Action:      action,
+		Index:       index,
+		Name:        route.Name,
+		PathPrefix:  route.PathPrefix,
+		Target:      route.Target,
+		PolicyName:  route.PolicyName,
+		StripPrefix: route.StripPrefix,
+		Error:       errText,
+	}
+	g.renderAdminPage(w, data, http.StatusBadRequest)
+}
+
+func (g *Gateway) renderAdminPolicyForm(w http.ResponseWriter, config Config, policy Policy, title, action, index, errText string) {
+	data := g.adminPageData(User{IsAdmin: true}, "", config.ActiveTab)
+	data.LogLimit = config.LogLimit
+	data.LoadBalancerMode = config.LoadBalancer.Mode
+	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader
+	data.LoadBalancerHeaders = strings.Join(clientIPHeaderChain(config.LoadBalancer), " → ")
+	data.LoadBalancerStripPort = config.LoadBalancer.StripPort
+	data.Policies = config.Policies
+	data.Routes = config.Routes
+	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
+	data.PolicyModal = policyModalState{
+		Open:   true,
+		Title:  title,
+		Action: action,
+		Index:  index,
+		Policy: policy,
+		Error:  errText,
+	}
 	g.renderAdminPage(w, data, http.StatusBadRequest)
 }
 
