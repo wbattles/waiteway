@@ -81,6 +81,7 @@ func routeFromForm(r *http.Request) (Route, error) {
 		Target:      strings.TrimSpace(r.FormValue("route_target")),
 		PolicyName:  strings.TrimSpace(r.FormValue("route_policy_name")),
 		StripPrefix: r.FormValue("route_strip_prefix") == "true",
+		WebSockets:  r.FormValue("route_websockets") == "true",
 	}
 
 	if route.Name == "" {

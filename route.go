@@ -49,6 +49,14 @@ func compileConfig(config Config) ([]compiledRoute, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse target %q: %w", route.Target, err)
 		}
+		// ws:// and wss:// are conveniences for the user. Go's reverse proxy
+		// dials over http/https and handles the upgrade dance itself.
+		switch strings.ToLower(targetURL.Scheme) {
+		case "ws":
+			targetURL.Scheme = "http"
+		case "wss":
+			targetURL.Scheme = "https"
+		}
 
 		var policyRef *compiledPolicy
 		if route.PolicyName != "" {

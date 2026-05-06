@@ -46,6 +46,7 @@ type Route struct {
 	Target      string
 	PolicyName  string
 	StripPrefix bool
+	WebSockets  bool
 }
 
 const defaultDBPath = "waiteway.db"

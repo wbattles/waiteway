@@ -49,6 +49,7 @@ type routeModalState struct {
 	Target      string
 	PolicyName  string
 	StripPrefix bool
+	WebSockets  bool
 	Error       string
 }
 
@@ -443,6 +444,7 @@ func (g *Gateway) renderAdminRouteForm(w http.ResponseWriter, config Config, rou
 		Target:      route.Target,
 		PolicyName:  route.PolicyName,
 		StripPrefix: route.StripPrefix,
+		WebSockets:  route.WebSockets,
 		Error:       errText,
 	}
 	g.renderAdminPage(w, data, http.StatusBadRequest)

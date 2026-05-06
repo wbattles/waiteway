@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -198,10 +203,17 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r, cancelTimeout := requestWithPolicyContext(r, route.policy)
-	defer cancelTimeout()
+	wsUpgrade := route.WebSockets && isWebSocketUpgrade(r)
 
-	cacheable := shouldCacheRouteResponse(route, r)
+	if !wsUpgrade {
+		// WS connections live longer than any sensible request timeout, so we
+		// skip the policy deadline when an upgrade is in flight.
+		var cancelTimeout context.CancelFunc
+		r, cancelTimeout = requestWithPolicyContext(r, route.policy)
+		defer cancelTimeout()
+	}
+
+	cacheable := !wsUpgrade && shouldCacheRouteResponse(route, r)
 	cacheKeyValue := ""
 	cacheNow := time.Time{}
 	if cacheable {
@@ -271,6 +283,43 @@ func (g *Gateway) compiledState() *compiledGatewayState {
 func (s *statusRecorder) WriteHeader(statusCode int) {
 	s.status = statusCode
 	s.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Hijack lets WebSocket and other protocol upgrades pass through. The
+// underlying ResponseWriter from net/http always supports hijacking.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := s.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("underlying ResponseWriter does not support hijacking")
+	}
+	conn, rw, err := hj.Hijack()
+	if err == nil {
+		s.status = http.StatusSwitchingProtocols
+	}
+	return conn, rw, err
+}
+
+// Flush passes flushes through so streaming responses work.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// isWebSocketUpgrade reports whether a request is asking for a websocket
+// upgrade. Both header values are case-insensitive per RFC 6455.
+func isWebSocketUpgrade(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, value := range r.Header.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type requestLog struct {
