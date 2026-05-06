@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -49,7 +50,10 @@ func TestStoreRoundTripsWebSocketsField(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	routes, _ = store.ListRoutes()
+	routes, err = store.ListRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if routes[0].WebSockets {
 		t.Fatal("expected WebSockets to be false after update")
 	}
@@ -147,22 +151,35 @@ func TestIsWebSocketUpgradeRecognizesValidHeaders(t *testing.T) {
 // TestStatusRecorderImplementsHijacker is the load-bearing fix: Go's reverse
 // proxy needs the response writer to satisfy http.Hijacker for any upgrade.
 func TestStatusRecorderImplementsHijacker(t *testing.T) {
+	hijacked := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		if _, ok := interface{}(rec).(http.Hijacker); !ok {
-			t.Fatal("statusRecorder does not implement http.Hijacker")
+			hijacked <- errors.New("statusRecorder does not implement http.Hijacker")
+			return
 		}
 		conn, _, err := rec.Hijack()
 		if err != nil {
-			t.Fatalf("hijack failed: %v", err)
+			hijacked <- err
+			return
 		}
 		conn.Close()
+		hijacked <- nil
 	}))
 	t.Cleanup(server.Close)
 
 	resp, err := http.Get(server.URL)
 	if err == nil {
 		resp.Body.Close()
+	}
+
+	select {
+	case err := <-hijacked:
+		if err != nil {
+			t.Fatalf("hijack failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never ran")
 	}
 }
 

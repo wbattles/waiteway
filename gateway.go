@@ -285,12 +285,13 @@ func (s *statusRecorder) WriteHeader(statusCode int) {
 	s.ResponseWriter.WriteHeader(statusCode)
 }
 
-// Hijack lets WebSocket and other protocol upgrades pass through. The
-// underlying ResponseWriter from net/http always supports hijacking.
+// Hijack lets WebSocket and other protocol upgrades pass through when the
+// underlying ResponseWriter supports it. HTTP/1.x connections from net/http
+// do; HTTP/2 connections do not.
 func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	hj, ok := s.ResponseWriter.(http.Hijacker)
 	if !ok {
-		return nil, nil, errors.New("underlying ResponseWriter does not support hijacking")
+		return nil, nil, errors.New("underlying ResponseWriter is not hijack-capable")
 	}
 	conn, rw, err := hj.Hijack()
 	if err == nil {
