@@ -161,6 +161,12 @@ func applyResponsePolicy(policy *compiledPolicy, resp *http.Response) error {
 		return nil
 	}
 
+	// 101 Switching Protocols hands the connection over to the upstream.
+	// Touching headers or reading the body would corrupt the stream.
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		return nil
+	}
+
 	for key := range policy.removeResponseHeaders {
 		resp.Header.Del(key)
 	}

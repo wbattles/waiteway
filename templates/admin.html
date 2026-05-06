@@ -207,12 +207,12 @@
                   <td>{{ routePolicyLabel $route }}</td>
                   <td>
                     <div class="row-actions">
-                      {{ if $.IsAdmin }}<button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-policy-name="{{ $route.PolicyName }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" onclick="openEditRouteButton(this)">edit</button>
+                      {{ if $.IsAdmin }}<button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-policy-name="{{ $route.PolicyName }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" data-route-websockets="{{ if $route.WebSockets }}true{{ else }}false{{ end }}" onclick="openEditRouteButton(this)">edit</button>
                       <form method="post" action="/">
                         <input type="hidden" name="action" value="delete_route">
                         <input type="hidden" name="route_index" value="{{ $index }}">
                         <button type="submit">delete</button>
-                      </form>{{ else }}<button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-policy-name="{{ $route.PolicyName }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" onclick="openViewRouteButton(this)">view</button>{{ end }}
+                      </form>{{ else }}<button type="button" data-route-index="{{ $index }}" data-route-name="{{ $route.Name }}" data-route-path-prefix="{{ $route.PathPrefix }}" data-route-target="{{ $route.Target }}" data-route-policy-name="{{ $route.PolicyName }}" data-route-strip-prefix="{{ if $route.StripPrefix }}true{{ else }}false{{ end }}" data-route-websockets="{{ if $route.WebSockets }}true{{ else }}false{{ end }}" onclick="openViewRouteButton(this)">view</button>{{ end }}
                     </div>
                   </td>
                 </tr>
@@ -465,6 +465,13 @@
             <option value="true">yes</option>
           </select>
         </div>
+        <div class="settings-row">
+          <label for="route-websockets">websockets</label>
+          <select id="route-websockets" name="route_websockets">
+            <option value="false">no</option>
+            <option value="true">yes</option>
+          </select>
+        </div>
         <div class="modal-actions">
           <button type="submit">save</button>
           <button type="button" onclick="closeRouteModal()">cancel</button>
@@ -483,6 +490,7 @@
        data-target="{{ .RouteModal.Target }}"
        data-policy-name="{{ .RouteModal.PolicyName }}"
        data-strip-prefix="{{ if .RouteModal.StripPrefix }}true{{ else }}false{{ end }}"
+       data-websockets="{{ if .RouteModal.WebSockets }}true{{ else }}false{{ end }}"
        data-error="{{ .RouteModal.Error }}"
        hidden></div>
 
@@ -1052,6 +1060,7 @@
       document.getElementById('route-target').value = ''
       document.getElementById('route-policy-name').value = ''
       document.getElementById('route-strip-prefix').value = 'false'
+      document.getElementById('route-websockets').value = 'false'
       clearRouteError()
       enableFormFields('route-form')
       document.getElementById('route-modal').classList.remove('hidden')
@@ -1067,6 +1076,7 @@
       document.getElementById('route-target').value = data.routeTarget
       document.getElementById('route-policy-name').value = data.routePolicyName
       document.getElementById('route-strip-prefix').value = data.routeStripPrefix
+      document.getElementById('route-websockets').value = data.routeWebsockets || 'false'
       clearRouteError()
       enableFormFields('route-form')
       document.getElementById('route-modal').classList.remove('hidden')
@@ -1082,6 +1092,7 @@
       document.getElementById('route-target').value = data.routeTarget
       document.getElementById('route-policy-name').value = data.routePolicyName
       document.getElementById('route-strip-prefix').value = data.routeStripPrefix
+      document.getElementById('route-websockets').value = data.routeWebsockets || 'false'
       clearRouteError()
       setFormReadOnly('route-form')
       document.getElementById('route-modal').classList.remove('hidden')
@@ -1124,6 +1135,7 @@
       document.getElementById('route-target').value = state.dataset.target || ''
       document.getElementById('route-policy-name').value = state.dataset.policyName || ''
       document.getElementById('route-strip-prefix').value = state.dataset.stripPrefix || 'false'
+      document.getElementById('route-websockets').value = state.dataset.websockets || 'false'
       clearRouteError()
       enableFormFields('route-form')
       document.getElementById('route-modal').classList.remove('hidden')

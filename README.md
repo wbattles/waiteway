@@ -51,9 +51,12 @@ Add, edit, delete routes. Each route has:
 
 - **name** — label for the route
 - **path prefix** — incoming path to match
-- **target** — upstream URL to proxy to
+- **target** — upstream URL to proxy to (`http`, `https`, `ws`, or `wss`)
 - **policy** — optional policy to attach
 - **strip prefix** — remove the matched prefix before proxying
+- **websockets** — allow WebSocket upgrades on this route
+
+When **websockets** is on, the request timeout, response cache, response transform, and response size limit are skipped for upgraded connections. Auth, rate limit, IP rules, and method allow list still apply at the handshake.
 
 ### Policy tab
 

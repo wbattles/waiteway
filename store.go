@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS routes (
 	target       TEXT NOT NULL,
 	policy_name  TEXT NOT NULL DEFAULT '',
 	strip_prefix INTEGER NOT NULL DEFAULT 0,
+	websockets   INTEGER NOT NULL DEFAULT 0,
 	position     INTEGER NOT NULL DEFAULT 0
 );
 
@@ -207,7 +208,7 @@ func (s *Store) SaveSettings(config Config) error {
 // --- routes ---
 
 func (s *Store) ListRoutes() ([]Route, error) {
-	rows, err := s.db.Query("SELECT id, name, path_prefix, target, policy_name, strip_prefix FROM routes ORDER BY position, id")
+	rows, err := s.db.Query("SELECT id, name, path_prefix, target, policy_name, strip_prefix, websockets FROM routes ORDER BY position, id")
 	if err != nil {
 		return nil, err
 	}
@@ -218,10 +219,12 @@ func (s *Store) ListRoutes() ([]Route, error) {
 		var r Route
 		var id int
 		var strip int
-		if err := rows.Scan(&id, &r.Name, &r.PathPrefix, &r.Target, &r.PolicyName, &strip); err != nil {
+		var ws int
+		if err := rows.Scan(&id, &r.Name, &r.PathPrefix, &r.Target, &r.PolicyName, &strip, &ws); err != nil {
 			return nil, err
 		}
 		r.StripPrefix = strip == 1
+		r.WebSockets = ws == 1
 		routes = append(routes, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -308,8 +311,8 @@ func (s *Store) AddRoute(r Route) error {
 	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM routes").Scan(&maxPos)
 
 	if _, err := tx.Exec(
-		"INSERT INTO routes (name, path_prefix, target, policy_name, strip_prefix, position) VALUES (?, ?, ?, ?, ?, ?)",
-		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.StripPrefix), maxPos+1,
+		"INSERT INTO routes (name, path_prefix, target, policy_name, strip_prefix, websockets, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.StripPrefix), boolToInt(r.WebSockets), maxPos+1,
 	); err != nil {
 		return err
 	}
@@ -348,8 +351,8 @@ func (s *Store) UpdateRoute(index int, r Route) error {
 	}
 
 	if _, err := tx.Exec(
-		"UPDATE routes SET name = ?, path_prefix = ?, target = ?, policy_name = ?, strip_prefix = ? WHERE id = ?",
-		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.StripPrefix), id,
+		"UPDATE routes SET name = ?, path_prefix = ?, target = ?, policy_name = ?, strip_prefix = ?, websockets = ? WHERE id = ?",
+		r.Name, r.PathPrefix, r.Target, r.PolicyName, boolToInt(r.StripPrefix), boolToInt(r.WebSockets), id,
 	); err != nil {
 		return err
 	}
