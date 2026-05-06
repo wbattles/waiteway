@@ -184,9 +184,9 @@ func TestStatusRecorderImplementsHijacker(t *testing.T) {
 }
 
 // TestGatewayProxiesWebSocketUpgrade is the end-to-end check. It spins up a
-// tiny upstream that completes the WS handshake and echoes back one message,
-// then proxies through the gateway. If anything along the policy / recorder
-// path drops the upgrade, this test catches it.
+// tiny upstream that completes the WS handshake and echoes lines back, then
+// proxies through the gateway. If anything along the policy / recorder path
+// drops the upgrade, this test catches it.
 func TestGatewayProxiesWebSocketUpgrade(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isWebSocketUpgrade(r) {
@@ -209,13 +209,21 @@ func TestGatewayProxiesWebSocketUpgrade(t *testing.T) {
 			"Upgrade: websocket\r\n" +
 			"Connection: Upgrade\r\n\r\n")
 		_ = brw.Flush()
-		// Echo a single line.
-		line, err := brw.ReadString('\n')
-		if err != nil {
-			return
+		// Echo lines until the client disconnects. This lets the test
+		// verify the connection is still alive after the policy timeout
+		// would have fired.
+		for {
+			line, err := brw.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if _, err := brw.WriteString(line); err != nil {
+				return
+			}
+			if err := brw.Flush(); err != nil {
+				return
+			}
 		}
-		_, _ = brw.WriteString(line)
-		_ = brw.Flush()
 	}))
 	t.Cleanup(upstream.Close)
 
@@ -290,7 +298,7 @@ func TestGatewayProxiesWebSocketUpgrade(t *testing.T) {
 		t.Fatalf("missing Upgrade header in response: %v", resp.Header)
 	}
 
-	// Now talk over the upgraded connection.
+	// First round-trip immediately after the upgrade.
 	if _, err := conn.Write([]byte("hello\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -302,12 +310,19 @@ func TestGatewayProxiesWebSocketUpgrade(t *testing.T) {
 		t.Fatalf("expected echo 'hello', got %q", echoed)
 	}
 
-	// Wait longer than the policy timeout to confirm it was bypassed.
+	// Sleep longer than the 1s policy timeout, then prove the connection
+	// is still alive with a second round-trip. If the gateway had honored
+	// the timeout, this write/read would fail.
 	time.Sleep(1500 * time.Millisecond)
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 	if _, err := conn.Write([]byte("still-here\n")); err != nil {
-		// upstream only echoes once, so a write error here is fine; the
-		// point of the sleep was just to outlive the request timeout
-		// without the gateway killing us.
+		t.Fatalf("write after timeout window failed: %v", err)
+	}
+	echoed, err = br.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read after timeout window failed: %v", err)
+	}
+	if echoed != "still-here\n" {
+		t.Fatalf("expected echo 'still-here', got %q", echoed)
 	}
 }
