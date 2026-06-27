@@ -5,6 +5,10 @@ image:
 
 replicaCount: 1
 
+serviceAccount:
+  create: true
+  name: ""
+
 admin:
   username: admin
   password: ""
