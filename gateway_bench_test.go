@@ -73,6 +73,17 @@ func drainResponse(b *testing.B, resp *http.Response) {
 	_ = resp.Body.Close()
 }
 
+func benchClient(b *testing.B) *http.Client {
+	b.Helper()
+	transport := &http.Transport{
+		MaxIdleConns:        1024,
+		MaxIdleConnsPerHost: 1024,
+		MaxConnsPerHost:     1024,
+	}
+	b.Cleanup(transport.CloseIdleConnections)
+	return &http.Client{Transport: transport}
+}
+
 func liveBenchURL() string {
 	if url := strings.TrimSpace(os.Getenv("WAITEWAY_BENCH_URL")); url != "" {
 		return url
@@ -153,7 +164,7 @@ func BenchmarkProxyBasicRoute(b *testing.B) {
 		},
 	}) + "/api/bench/path"
 
-	client := &http.Client{}
+	client := benchClient(b)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -163,6 +174,30 @@ func BenchmarkProxyBasicRoute(b *testing.B) {
 		}
 		drainResponse(b, resp)
 	}
+}
+
+func BenchmarkProxyBasicRouteParallel(b *testing.B) {
+	silenceStdout(b)
+	upstream := upstreamForBench(b)
+	url := gatewayForBench(b, Config{
+		Routes: []Route{
+			{Name: "bench", PathPrefix: "/api/bench", Target: upstream.URL},
+		},
+	}) + "/api/bench/path"
+
+	client := benchClient(b)
+	b.ReportAllocs()
+	b.SetParallelism(liveBenchParallelism(b))
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			resp, err := client.Get(url)
+			if err != nil {
+				b.Fatal(err)
+			}
+			drainResponse(b, resp)
+		}
+	})
 }
 
 // BenchmarkProxyWithPolicy measures the per-request overhead added by a
