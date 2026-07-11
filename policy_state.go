@@ -141,8 +141,8 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err == nil {
 			return resp, nil
 		}
-		if resp != nil {
-			resp.Body.Close()
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
 		}
 	}
 	return nil, err
