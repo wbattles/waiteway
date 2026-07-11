@@ -54,6 +54,8 @@ type compiledPolicy struct {
 	rateLimiter           *rateLimiter
 	cache                 *responseCache
 	circuitBreaker        *circuitBreaker
+	corsAllowMethods      string
+	corsAllowHeaders      string
 }
 
 func compilePolicy(policy Policy) (*compiledPolicy, error) {
@@ -73,6 +75,8 @@ func compilePolicy(policy Policy) (*compiledPolicy, error) {
 	compiled.addResponseHeaders = parseHeaderMap(policy.AddResponseHeaders)
 	compiled.removeResponseHeaders = parseHeaderSet(policy.RemoveResponseHeaders)
 	compiled.requestTimeout = time.Duration(policy.RequestTimeoutSeconds) * time.Second
+	compiled.corsAllowMethods = strings.Join(policy.CORSAllowMethods, ", ")
+	compiled.corsAllowHeaders = strings.Join(policy.CORSAllowHeaders, ", ")
 
 	allowList, err := parsePrefixes(policy.IPAllowList)
 	if err != nil {

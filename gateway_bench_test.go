@@ -6,8 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
+
+const defaultLiveBenchURL = "http://waiteway.lab.home.arpa/api/example"
 
 // silenceStdout redirects os.Stdout to /dev/null for the duration of the
 // benchmark so per-request log lines don't drown out benchmark results.
@@ -68,6 +73,86 @@ func drainResponse(b *testing.B, resp *http.Response) {
 	_ = resp.Body.Close()
 }
 
+func benchClient(b *testing.B) *http.Client {
+	b.Helper()
+	transport := &http.Transport{
+		MaxIdleConns:        1024,
+		MaxIdleConnsPerHost: 1024,
+		MaxConnsPerHost:     1024,
+	}
+	b.Cleanup(transport.CloseIdleConnections)
+	return &http.Client{Transport: transport}
+}
+
+func liveBenchURL() string {
+	if url := strings.TrimSpace(os.Getenv("WAITEWAY_BENCH_URL")); url != "" {
+		return url
+	}
+	return defaultLiveBenchURL
+}
+
+func liveBenchTimeout(b *testing.B) time.Duration {
+	b.Helper()
+	raw := strings.TrimSpace(os.Getenv("WAITEWAY_BENCH_TIMEOUT"))
+	if raw == "" {
+		return 3 * time.Second
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil {
+		b.Fatalf("invalid WAITEWAY_BENCH_TIMEOUT %q: %v", raw, err)
+	}
+	return timeout
+}
+
+func liveBenchParallelism(b *testing.B) int {
+	b.Helper()
+	raw := strings.TrimSpace(os.Getenv("WAITEWAY_BENCH_PARALLELISM"))
+	if raw == "" {
+		return 4
+	}
+	parallelism, err := strconv.Atoi(raw)
+	if err != nil || parallelism < 1 {
+		b.Fatalf("invalid WAITEWAY_BENCH_PARALLELISM %q", raw)
+	}
+	return parallelism
+}
+
+func benchmarkLiveURL(b *testing.B, parallel bool) {
+	b.Helper()
+	url := liveBenchURL()
+	client := &http.Client{Timeout: liveBenchTimeout(b)}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		b.Skipf("live benchmark skipped for %s: %v", url, err)
+	}
+	drainResponse(b, resp)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	if !parallel {
+		for i := 0; i < b.N; i++ {
+			resp, err := client.Get(url)
+			if err != nil {
+				b.Fatal(err)
+			}
+			drainResponse(b, resp)
+		}
+		return
+	}
+
+	b.SetParallelism(liveBenchParallelism(b))
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			resp, err := client.Get(url)
+			if err != nil {
+				b.Fatal(err)
+			}
+			drainResponse(b, resp)
+		}
+	})
+}
+
 // BenchmarkProxyBasicRoute measures the cost of forwarding a request through
 // a single route with no policy attached.
 func BenchmarkProxyBasicRoute(b *testing.B) {
@@ -79,7 +164,7 @@ func BenchmarkProxyBasicRoute(b *testing.B) {
 		},
 	}) + "/api/bench/path"
 
-	client := &http.Client{}
+	client := benchClient(b)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -89,6 +174,30 @@ func BenchmarkProxyBasicRoute(b *testing.B) {
 		}
 		drainResponse(b, resp)
 	}
+}
+
+func BenchmarkProxyBasicRouteParallel(b *testing.B) {
+	silenceStdout(b)
+	upstream := upstreamForBench(b)
+	url := gatewayForBench(b, Config{
+		Routes: []Route{
+			{Name: "bench", PathPrefix: "/api/bench", Target: upstream.URL},
+		},
+	}) + "/api/bench/path"
+
+	client := benchClient(b)
+	b.ReportAllocs()
+	b.SetParallelism(liveBenchParallelism(b))
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			resp, err := client.Get(url)
+			if err != nil {
+				b.Fatal(err)
+			}
+			drainResponse(b, resp)
+		}
+	})
 }
 
 // BenchmarkProxyWithPolicy measures the per-request overhead added by a
@@ -192,4 +301,13 @@ func BenchmarkRouteMatch(b *testing.B) {
 			b.Fatal("expected route to match")
 		}
 	}
+}
+
+func BenchmarkLiveGatewayURL(b *testing.B) {
+	b.Run("serial", func(b *testing.B) {
+		benchmarkLiveURL(b, false)
+	})
+	b.Run("parallel", func(b *testing.B) {
+		benchmarkLiveURL(b, true)
+	})
 }

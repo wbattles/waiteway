@@ -20,7 +20,7 @@ func shouldReadBody(method string) bool {
 	}
 }
 
-func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey string, requestUser User, hasRequestUser bool, clientIP netip.Addr, hasClientIP bool, now time.Time) (bool, int, string) {
+func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, hasAPIKeyUser bool, clientIP netip.Addr, hasClientIP bool, now time.Time) (bool, int, string) {
 	if route.policy == nil {
 		return true, http.StatusOK, ""
 	}
@@ -56,7 +56,7 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey s
 		return false, http.StatusBadRequest, "bad request"
 	}
 
-	if route.policy.RequireAPIKey && !g.authorizePolicyAPIKey(route, route.policy, apiKey, requestUser, hasRequestUser) {
+	if route.policy.RequireAPIKey && !hasAPIKeyUser {
 		return false, http.StatusUnauthorized, "unauthorized"
 	}
 
@@ -74,10 +74,6 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey s
 	applyRequestHeaders(route.policy, r)
 
 	return true, http.StatusOK, ""
-}
-
-func (g *Gateway) authorizePolicyAPIKey(route compiledRoute, policy *compiledPolicy, key string, requestUser User, hasRequestUser bool) bool {
-	return hasRequestUser
 }
 
 func (g *Gateway) authorizePolicyUserAuth(policy *compiledPolicy, username, password string) bool {
@@ -181,11 +177,11 @@ func applyResponsePolicy(policy *compiledPolicy, resp *http.Response) error {
 			if origin != "*" {
 				resp.Header.Add("Vary", "Origin")
 			}
-			if len(policy.CORSAllowMethods) > 0 {
-				resp.Header.Set("Access-Control-Allow-Methods", strings.Join(policy.CORSAllowMethods, ", "))
+			if policy.corsAllowMethods != "" {
+				resp.Header.Set("Access-Control-Allow-Methods", policy.corsAllowMethods)
 			}
-			if len(policy.CORSAllowHeaders) > 0 {
-				resp.Header.Set("Access-Control-Allow-Headers", strings.Join(policy.CORSAllowHeaders, ", "))
+			if policy.corsAllowHeaders != "" {
+				resp.Header.Set("Access-Control-Allow-Headers", policy.corsAllowHeaders)
 			}
 		}
 	}
@@ -210,7 +206,7 @@ func applyResponsePolicy(policy *compiledPolicy, resp *http.Response) error {
 		return fmt.Errorf("response too large")
 	}
 	if policy.ResponseTransformFind != "" {
-		body = []byte(strings.ReplaceAll(string(body), policy.ResponseTransformFind, policy.ResponseTransformReplace))
+		body = bytes.ReplaceAll(body, []byte(policy.ResponseTransformFind), []byte(policy.ResponseTransformReplace))
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
@@ -233,11 +229,11 @@ func applyCORSPreflight(policy *compiledPolicy, w http.ResponseWriter, r *http.R
 	if origin != "*" {
 		w.Header().Add("Vary", "Origin")
 	}
-	if len(policy.CORSAllowMethods) > 0 {
-		w.Header().Set("Access-Control-Allow-Methods", strings.Join(policy.CORSAllowMethods, ", "))
+	if policy.corsAllowMethods != "" {
+		w.Header().Set("Access-Control-Allow-Methods", policy.corsAllowMethods)
 	}
-	if len(policy.CORSAllowHeaders) > 0 {
-		w.Header().Set("Access-Control-Allow-Headers", strings.Join(policy.CORSAllowHeaders, ", "))
+	if policy.corsAllowHeaders != "" {
+		w.Header().Set("Access-Control-Allow-Headers", policy.corsAllowHeaders)
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return true

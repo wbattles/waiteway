@@ -199,60 +199,30 @@ func (g *Gateway) handleAdminPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// every admin action requires admin, so check once
+	if !g.authorizeAdmin(r) {
+		g.renderAdminError(w, "admin access required")
+		return
+	}
+
 	switch r.FormValue("action") {
 	case "add_policy":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
 		g.handleAdminAddPolicy(w, r)
 	case "update_policy":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
 		g.handleAdminUpdatePolicy(w, r)
 	case "delete_policy":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
 		g.handleAdminDeletePolicy(w, r)
 	case "save_logging":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
 		g.handleAdminSaveLogging(w, r)
 	case "save_load_balancer":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
 		g.handleAdminSaveLoadBalancer(w, r)
 	case "clear_logs":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
 		g.handleAdminClearLogs(w, r)
 	case "add_route":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
 		g.handleAdminAddRoute(w, r)
 	case "update_route":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
 		g.handleAdminUpdateRoute(w, r)
 	case "delete_route":
-		if !g.authorizeAdmin(r) {
-			g.renderAdminError(w, "admin access required")
-			return
-		}
 		g.handleAdminDeleteRoute(w, r)
 	default:
 		g.renderAdminError(w, "unknown admin action")
@@ -411,7 +381,10 @@ func (g *Gateway) renderAdminError(w http.ResponseWriter, message string) {
 	g.renderAdminPage(w, g.adminPageData(User{}, message, "gateway"), http.StatusBadRequest)
 }
 
-func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, errText string) {
+// adminFormData builds page data that reflects a submitted (possibly
+// unsaved) config instead of the live one, so forms re-render what the
+// admin typed.
+func (g *Gateway) adminFormData(config Config, errText string) adminPageData {
 	data := g.adminPageData(User{IsAdmin: true}, errText, config.ActiveTab)
 	data.LogLimit = config.LogLimit
 	data.LoadBalancerMode = config.LoadBalancer.Mode
@@ -421,19 +394,15 @@ func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, errText 
 	data.Policies = config.Policies
 	data.Routes = config.Routes
 	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
-	g.renderAdminPage(w, data, http.StatusBadRequest)
+	return data
+}
+
+func (g *Gateway) renderAdminForm(w http.ResponseWriter, config Config, errText string) {
+	g.renderAdminPage(w, g.adminFormData(config, errText), http.StatusBadRequest)
 }
 
 func (g *Gateway) renderAdminRouteForm(w http.ResponseWriter, config Config, route Route, title, action, index, errText string) {
-	data := g.adminPageData(User{IsAdmin: true}, "", config.ActiveTab)
-	data.LogLimit = config.LogLimit
-	data.LoadBalancerMode = config.LoadBalancer.Mode
-	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader
-	data.LoadBalancerHeaders = strings.Join(clientIPHeaderChain(config.LoadBalancer), " → ")
-	data.LoadBalancerStripPort = config.LoadBalancer.StripPort
-	data.Policies = config.Policies
-	data.Routes = config.Routes
-	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
+	data := g.adminFormData(config, "")
 	data.RouteModal = routeModalState{
 		Open:        true,
 		Title:       title,
@@ -451,15 +420,7 @@ func (g *Gateway) renderAdminRouteForm(w http.ResponseWriter, config Config, rou
 }
 
 func (g *Gateway) renderAdminPolicyForm(w http.ResponseWriter, config Config, policy Policy, title, action, index, errText string) {
-	data := g.adminPageData(User{IsAdmin: true}, "", config.ActiveTab)
-	data.LogLimit = config.LogLimit
-	data.LoadBalancerMode = config.LoadBalancer.Mode
-	data.LoadBalancerHeader = config.LoadBalancer.ClientIPHeader
-	data.LoadBalancerHeaders = strings.Join(clientIPHeaderChain(config.LoadBalancer), " → ")
-	data.LoadBalancerStripPort = config.LoadBalancer.StripPort
-	data.Policies = config.Policies
-	data.Routes = config.Routes
-	data.ActiveTab = normalizeAdminTab(config.ActiveTab)
+	data := g.adminFormData(config, "")
 	data.PolicyModal = policyModalState{
 		Open:   true,
 		Title:  title,
@@ -557,40 +518,6 @@ func splitLines(value string) []string {
 		items = append(items, line)
 	}
 	return items
-}
-
-func splitInts(value string) []int {
-	items := splitLines(value)
-	result := make([]int, 0, len(items))
-	seen := map[int]struct{}{}
-	for _, item := range items {
-		parsed, err := strconv.Atoi(strings.TrimSpace(item))
-		if err != nil || parsed <= 0 {
-			continue
-		}
-		if _, ok := seen[parsed]; ok {
-			continue
-		}
-		seen[parsed] = struct{}{}
-		result = append(result, parsed)
-	}
-	return result
-}
-
-func joinInts(values []int) string {
-	items := make([]string, 0, len(values))
-	seen := map[int]struct{}{}
-	for _, value := range values {
-		if value <= 0 {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		items = append(items, strconv.Itoa(value))
-	}
-	return strings.Join(items, "\n")
 }
 
 func intFromForm(r *http.Request, key string) (int, error) {

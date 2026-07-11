@@ -161,12 +161,9 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var apiKey string
-	var requestUser User
-	var hasRequestUser bool
+	hasAPIKeyUser := false
 	if routeNeedsAPIKey(route) {
-		apiKey = requestAPIKey(r)
-		requestUser, hasRequestUser = g.requestUser(r)
+		_, hasAPIKeyUser = g.requestUser(r)
 	}
 
 	needsClientIP := routeNeedsClientAddr(route)
@@ -194,7 +191,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 		now = time.Now()
 	}
 
-	if ok, status, message := g.authorizePolicy(route, r, apiKey, requestUser, hasRequestUser, clientAddr, hasClientAddr, now); !ok {
+	if ok, status, message := g.authorizePolicy(route, r, hasAPIKeyUser, clientAddr, hasClientAddr, now); !ok {
 		if clientIP == "" {
 			clientIP = g.clientIP(r)
 		}
@@ -424,15 +421,31 @@ func (g *Gateway) purgeSessionsLoop() {
 func (g *Gateway) drainLogs() {
 	defer close(g.doneCh)
 	const trimEvery = 100
+	const maxBatch = 128
 	count := 0
+	batch := make([]requestLog, 0, maxBatch)
 
+	// write drains whatever else is already queued (up to maxBatch) and
+	// stores the whole batch in one transaction instead of one per entry.
 	write := func(entry requestLog) {
-		g.logRequest(entry)
-		if err := g.store.AddLog(entry); err != nil {
-			log.Printf("waiteway failed to store request log: %v", err)
+		batch = append(batch[:0], entry)
+	fill:
+		for len(batch) < maxBatch {
+			select {
+			case next := <-g.logCh:
+				batch = append(batch, next)
+			default:
+				break fill
+			}
+		}
+		for _, e := range batch {
+			g.logRequest(e)
+		}
+		if err := g.store.AddLogs(batch); err != nil {
+			log.Printf("waiteway failed to store request logs: %v", err)
 			return
 		}
-		count++
+		count += len(batch)
 		if count >= trimEvery {
 			count = 0
 			limit := g.compiledState().logLimit

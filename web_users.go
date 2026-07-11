@@ -63,10 +63,6 @@ func (g *Gateway) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) handleAPI(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	switch {
-	case path == "/api/current-user":
-		g.handleAPICurrentUser(w, r)
-	case path == "/api/users":
-		g.handleAPIUsers(w, r)
 	case path == "/api/me/password":
 		g.handleAPIMyPassword(w, r)
 	case path == "/api/me/api-keys":
@@ -101,34 +97,6 @@ func (g *Gateway) requireAdmin(w http.ResponseWriter, r *http.Request) (User, bo
 		return User{}, false
 	}
 	return user, true
-}
-
-func (g *Gateway) handleAPICurrentUser(w http.ResponseWriter, r *http.Request) {
-	user, ok := g.requireUser(w, r)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": user.ID, "username": user.Username, "is_admin": user.IsAdmin})
-}
-
-func (g *Gateway) handleAPIUsers(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if _, ok := g.requireAdmin(w, r); !ok {
-		return
-	}
-	users, err := g.store.ListUsers()
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "failed to load users")
-		return
-	}
-	items := make([]map[string]any, 0, len(users))
-	for _, user := range users {
-		items = append(items, map[string]any{"id": user.ID, "username": user.Username, "is_admin": user.IsAdmin})
-	}
-	writeJSON(w, http.StatusOK, items)
 }
 
 func (g *Gateway) handleAPIMyPassword(w http.ResponseWriter, r *http.Request) {

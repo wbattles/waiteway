@@ -1,6 +1,6 @@
 image:
-  repository: waiteway
-  tag: latest
+  repository: ghcr.io/wbattles/waiteway
+  tag: v1.4.1
   pullPolicy: IfNotPresent
 
 replicaCount: 1

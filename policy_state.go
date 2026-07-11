@@ -17,7 +17,7 @@ type rateLimiter struct {
 }
 
 type rateLimiterEntry struct {
-	count    int
+	count       int
 	windowStart time.Time
 }
 
@@ -125,6 +125,10 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	for attempt := 0; attempt <= t.retries; attempt++ {
+		// stop retrying once the client is gone or the policy timeout fired
+		if ctxErr := req.Context().Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		clone := req.Clone(req.Context())
 		if attempt == 0 && req.GetBody == nil {
 			clone.Body = req.Body
@@ -136,6 +140,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp, err = base.RoundTrip(clone)
 		if err == nil {
 			return resp, nil
+		}
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
 		}
 	}
 	return nil, err
@@ -174,6 +181,10 @@ var cacheRecorderPool = sync.Pool{
 // of the cache. Popular-then-cold keys would otherwise accumulate forever.
 const responseCacheSweepEvery = 64
 
+// maxResponseCacheEntries caps the cache so unique query strings cannot grow
+// memory without bound inside the TTL window.
+const maxResponseCacheEntries = 1024
+
 func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
 	c.mu.RLock()
 	entry, ok := c.entries[key]
@@ -196,6 +207,21 @@ func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
 
 func (c *responseCache) Set(key string, status int, header http.Header, body []byte, now time.Time) {
 	c.mu.Lock()
+	if _, exists := c.entries[key]; !exists && len(c.entries) >= maxResponseCacheEntries {
+		for k, entry := range c.entries {
+			if now.After(entry.expiresAt) {
+				delete(c.entries, k)
+			}
+		}
+		// Fallback: if the cache is still full after dropping expired entries, evict one arbitrary entry.
+		// Upgrade to LRU if cache hit rates ever matter enough to measure.
+		if len(c.entries) >= maxResponseCacheEntries {
+			for k := range c.entries {
+				delete(c.entries, k)
+				break
+			}
+		}
+	}
 	c.entries[key] = cachedResponse{
 		status:    status,
 		header:    cloneHeader(header),
