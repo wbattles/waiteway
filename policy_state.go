@@ -213,8 +213,8 @@ func (c *responseCache) Set(key string, status int, header http.Header, body []b
 				delete(c.entries, k)
 			}
 		}
-		// ponytail: still full means evict one arbitrary entry; upgrade to
-		// LRU if cache hit rates ever matter enough to measure.
+		// Fallback: if the cache is still full after dropping expired entries, evict one arbitrary entry.
+		// Upgrade to LRU if cache hit rates ever matter enough to measure.
 		if len(c.entries) >= maxResponseCacheEntries {
 			for k := range c.entries {
 				delete(c.entries, k)
