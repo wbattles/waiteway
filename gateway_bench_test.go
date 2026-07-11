@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const defaultLiveBenchURL = "http://waiteway.lab.home.arpa/api/exaple"
+const defaultLiveBenchURL = "http://waiteway.lab.home.arpa/api/example"
 
 // silenceStdout redirects os.Stdout to /dev/null for the duration of the
 // benchmark so per-request log lines don't drown out benchmark results.
