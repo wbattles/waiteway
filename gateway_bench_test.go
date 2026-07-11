@@ -6,8 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
+
+const defaultLiveBenchURL = "http://waiteway.lab.home.arpa/api/exaple"
 
 // silenceStdout redirects os.Stdout to /dev/null for the duration of the
 // benchmark so per-request log lines don't drown out benchmark results.
@@ -66,6 +71,75 @@ func drainResponse(b *testing.B, resp *http.Response) {
 	b.Helper()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
+}
+
+func liveBenchURL() string {
+	if url := strings.TrimSpace(os.Getenv("WAITEWAY_BENCH_URL")); url != "" {
+		return url
+	}
+	return defaultLiveBenchURL
+}
+
+func liveBenchTimeout(b *testing.B) time.Duration {
+	b.Helper()
+	raw := strings.TrimSpace(os.Getenv("WAITEWAY_BENCH_TIMEOUT"))
+	if raw == "" {
+		return 3 * time.Second
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil {
+		b.Fatalf("invalid WAITEWAY_BENCH_TIMEOUT %q: %v", raw, err)
+	}
+	return timeout
+}
+
+func liveBenchParallelism(b *testing.B) int {
+	b.Helper()
+	raw := strings.TrimSpace(os.Getenv("WAITEWAY_BENCH_PARALLELISM"))
+	if raw == "" {
+		return 4
+	}
+	parallelism, err := strconv.Atoi(raw)
+	if err != nil || parallelism < 1 {
+		b.Fatalf("invalid WAITEWAY_BENCH_PARALLELISM %q", raw)
+	}
+	return parallelism
+}
+
+func benchmarkLiveURL(b *testing.B, parallel bool) {
+	b.Helper()
+	url := liveBenchURL()
+	client := &http.Client{Timeout: liveBenchTimeout(b)}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		b.Skipf("live benchmark skipped for %s: %v", url, err)
+	}
+	drainResponse(b, resp)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	if !parallel {
+		for i := 0; i < b.N; i++ {
+			resp, err := client.Get(url)
+			if err != nil {
+				b.Fatal(err)
+			}
+			drainResponse(b, resp)
+		}
+		return
+	}
+
+	b.SetParallelism(liveBenchParallelism(b))
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			resp, err := client.Get(url)
+			if err != nil {
+				b.Fatal(err)
+			}
+			drainResponse(b, resp)
+		}
+	})
 }
 
 // BenchmarkProxyBasicRoute measures the cost of forwarding a request through
@@ -192,4 +266,13 @@ func BenchmarkRouteMatch(b *testing.B) {
 			b.Fatal("expected route to match")
 		}
 	}
+}
+
+func BenchmarkLiveGatewayURL(b *testing.B) {
+	b.Run("serial", func(b *testing.B) {
+		benchmarkLiveURL(b, false)
+	})
+	b.Run("parallel", func(b *testing.B) {
+		benchmarkLiveURL(b, true)
+	})
 }
