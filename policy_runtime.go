@@ -20,7 +20,7 @@ func shouldReadBody(method string) bool {
 	}
 }
 
-func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey string, requestUser User, hasRequestUser bool, clientIP netip.Addr, hasClientIP bool, now time.Time) (bool, int, string) {
+func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, hasAPIKeyUser bool, clientIP netip.Addr, hasClientIP bool, now time.Time) (bool, int, string) {
 	if route.policy == nil {
 		return true, http.StatusOK, ""
 	}
@@ -56,7 +56,7 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey s
 		return false, http.StatusBadRequest, "bad request"
 	}
 
-	if route.policy.RequireAPIKey && !g.authorizePolicyAPIKey(route, route.policy, apiKey, requestUser, hasRequestUser) {
+	if route.policy.RequireAPIKey && !hasAPIKeyUser {
 		return false, http.StatusUnauthorized, "unauthorized"
 	}
 
@@ -74,10 +74,6 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, apiKey s
 	applyRequestHeaders(route.policy, r)
 
 	return true, http.StatusOK, ""
-}
-
-func (g *Gateway) authorizePolicyAPIKey(route compiledRoute, policy *compiledPolicy, key string, requestUser User, hasRequestUser bool) bool {
-	return hasRequestUser
 }
 
 func (g *Gateway) authorizePolicyUserAuth(policy *compiledPolicy, username, password string) bool {

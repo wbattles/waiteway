@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -27,8 +26,6 @@ CREATE TABLE IF NOT EXISTS policies (
 	retry_count                   INTEGER NOT NULL DEFAULT 0,
 	require_api_key               INTEGER NOT NULL DEFAULT 0,
 	require_user_auth             INTEGER NOT NULL DEFAULT 0,
-	basic_auth_username           TEXT NOT NULL DEFAULT '',
-	basic_auth_password           TEXT NOT NULL DEFAULT '',
 	rate_limit_requests           INTEGER NOT NULL DEFAULT 0,
 	rate_limit_window_seconds     INTEGER NOT NULL DEFAULT 0,
 	allowed_methods               TEXT NOT NULL DEFAULT '',
@@ -142,14 +139,6 @@ func (s *Store) GetSetting(key, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func (s *Store) SetSetting(key, value string) error {
-	_, err := s.db.Exec(
-		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-		key, value,
-	)
-	return err
 }
 
 func (s *Store) LoadConfig() (Config, error) {
@@ -379,11 +368,33 @@ func (s *Store) DeleteRoute(index int) error {
 // --- request logs ---
 
 func (s *Store) AddLog(entry requestLog) error {
-	_, err := s.db.Exec(
-		"INSERT INTO request_logs (time, method, path, status, route, remote_addr, duration_ns) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		entry.Time.Format(time.RFC3339Nano), entry.Method, entry.Path, entry.Status, entry.Route, entry.RemoteAddr, int64(entry.Duration),
-	)
-	return err
+	return s.AddLogs([]requestLog{entry})
+}
+
+// AddLogs inserts a batch of log entries in one transaction so the log
+// drainer pays one commit per batch instead of one per request.
+func (s *Store) AddLogs(entries []requestLog) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare("INSERT INTO request_logs (time, method, path, status, route, remote_addr, duration_ns) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, entry := range entries {
+		if _, err := stmt.Exec(entry.Time.Format(time.RFC3339Nano), entry.Method, entry.Path, entry.Status, entry.Route, entry.RemoteAddr, int64(entry.Duration)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListLogs(limit int) ([]requestLog, error) {
@@ -424,34 +435,8 @@ func (s *Store) TrimLogs(limit int) error {
 
 // --- sessions ---
 
-func (s *Store) AddSession(id string) error {
-	_, err := s.db.Exec(
-		"INSERT INTO sessions (id, created_at) VALUES (?, ?)",
-		id, time.Now().UTC().Format(time.RFC3339Nano),
-	)
-	return err
-}
-
-func (s *Store) HasSession(id string) bool {
-	var exists int
-	err := s.db.QueryRow("SELECT 1 FROM sessions WHERE id = ? LIMIT 1", id).Scan(&exists)
-	if err == nil {
-		return true
-	}
-	if err == sql.ErrNoRows {
-		return false
-	}
-	log.Printf("waiteway failed to check session: %v", err)
-	return false
-}
-
 func (s *Store) DeleteSession(id string) error {
 	_, err := s.db.Exec("DELETE FROM sessions WHERE id = ?", id)
-	return err
-}
-
-func (s *Store) DeleteAllSessions() error {
-	_, err := s.db.Exec("DELETE FROM sessions")
 	return err
 }
 

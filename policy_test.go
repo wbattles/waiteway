@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -691,5 +693,45 @@ func TestPolicyMultipleFeatures(t *testing.T) {
 	}
 	if receivedHeader != "yes" {
 		t.Fatalf("expected X-Injected 'yes', got %q", receivedHeader)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestRetryTransportStopsWhenContextDone(t *testing.T) {
+	attempts := 0
+	rt := &retryTransport{retries: 5, base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return nil, errors.New("boom")
+	})}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://upstream.invalid/", nil)
+
+	_, err := rt.RoundTrip(req)
+	if attempts != 0 {
+		t.Fatalf("expected no attempts with canceled context, got %d", attempts)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestResponseCacheCapsEntries(t *testing.T) {
+	cache := &responseCache{ttl: time.Minute, entries: map[string]cachedResponse{}}
+	now := time.Now()
+	for i := 0; i < maxResponseCacheEntries+50; i++ {
+		cache.Set(fmt.Sprintf("GET /cached?i=%d", i), 200, http.Header{}, []byte("body"), now)
+	}
+	if len(cache.entries) > maxResponseCacheEntries {
+		t.Fatalf("cache grew past cap: %d entries", len(cache.entries))
+	}
+	// a fresh set after eviction must still be retrievable
+	cache.Set("GET /cached?fresh=1", 200, http.Header{}, []byte("body"), now)
+	if _, ok := cache.Get("GET /cached?fresh=1", now); !ok {
+		t.Fatal("expected freshly set entry to be cached")
 	}
 }

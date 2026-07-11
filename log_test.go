@@ -80,8 +80,7 @@ func TestGatewayCloseIsIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	gw, err := newGateway(store, Config{
-	})
+	gw, err := newGateway(store, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,8 +96,7 @@ func TestGatewayRecordRequestIsNonBlocking(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	gw, err := newGateway(store, Config{
-	})
+	gw, err := newGateway(store, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,8 +131,7 @@ func TestAdminMetricsEndpointReportsCounters(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	gw, err := newGateway(store, Config{
-	})
+	gw, err := newGateway(store, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,8 +169,7 @@ func TestGatewayLogRequestWritesRawJSONLine(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	gw, err := newGateway(store, Config{
-	})
+	gw, err := newGateway(store, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
