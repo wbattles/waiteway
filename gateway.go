@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
@@ -38,6 +40,8 @@ type Gateway struct {
 	closeOnce sync.Once
 
 	sessionPurgeDone chan struct{}
+
+	apiKeyCache *apiKeyCache
 }
 
 type gatewayMetrics struct {
@@ -96,6 +100,7 @@ func newGateway(store *Store, config Config) (*Gateway, error) {
 		stopCh:           make(chan struct{}),
 		doneCh:           make(chan struct{}),
 		sessionPurgeDone: make(chan struct{}),
+		apiKeyCache:      newAPIKeyCache(apiKeyCacheTTL),
 	}
 
 	if err := g.applyConfig(config); err != nil {
@@ -146,11 +151,40 @@ func (g *Gateway) gatewayHandler() http.Handler {
 	return mux
 }
 
+// requestIDHeader carries a per-request correlation ID both to the upstream
+// (so waiteway's logs can be matched against the upstream's) and back to the
+// client (so a support request can name the exact request it's about).
+const requestIDHeader = "X-Waiteway-Request-Id"
+
+var requestIDCounter atomic.Uint64
+
+// requestIDPrefix is a per-process random value set once at startup. Combined
+// with the monotonic counter below it makes newRequestID cheap enough for
+// the hot path: no per-request syscall or lock, just an atomic increment.
+var requestIDPrefix = newRequestIDPrefix()
+
+func newRequestIDPrefix() string {
+	buf := make([]byte, 4)
+	if _, err := rand.Read(buf); err != nil {
+		return "boot0000"
+	}
+	return hex.EncodeToString(buf)
+}
+
+func newRequestID() string {
+	n := requestIDCounter.Add(1)
+	return requestIDPrefix + "-" + strconv.FormatUint(n, 36)
+}
+
 func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/favicon.ico" {
 		http.NotFound(w, r)
 		return
 	}
+
+	requestID := newRequestID()
+	r.Header.Set(requestIDHeader, requestID)
+	w.Header().Set(requestIDHeader, requestID)
 
 	route, ok := g.matchRoute(r.URL.Path)
 	if !ok {
@@ -327,6 +361,7 @@ type requestLog struct {
 	Route      string
 	RemoteAddr string
 	Duration   time.Duration
+	RequestID  string
 }
 
 var logBufferPool = sync.Pool{
@@ -345,6 +380,7 @@ func (g *Gateway) recordRequest(r *http.Request, clientIP, routeName string, sta
 		Route:      routeName,
 		RemoteAddr: clientIP,
 		Duration:   duration,
+		RequestID:  r.Header.Get(requestIDHeader),
 	}
 
 	atomic.AddUint64(&g.metrics.requestsTotal, 1)
@@ -379,6 +415,8 @@ func (g *Gateway) logRequest(entry requestLog) {
 	buf = appendJSONString(buf, entry.RemoteAddr)
 	buf = append(buf, `,"duration_ms":`...)
 	buf = strconv.AppendFloat(buf, float64(entry.Duration)/float64(time.Millisecond), 'f', -1, 64)
+	buf = append(buf, `,"request_id":`...)
+	buf = appendJSONString(buf, entry.RequestID)
 	buf = append(buf, '}', '\n')
 
 	if _, err := os.Stdout.Write(buf); err != nil {

@@ -68,7 +68,7 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, hasAPIKe
 		}
 	}
 
-	if route.policy.rateLimiter != nil && !route.policy.rateLimiter.Allow(clientIP.String(), now) {
+	if route.policy.rateLimiter != nil && !route.policy.rateLimiter.Allow(clientIP, now) {
 		return false, http.StatusTooManyRequests, "rate limit exceeded"
 	}
 
@@ -77,6 +77,14 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, hasAPIKe
 	return true, http.StatusOK, ""
 }
 
+// authorizePolicyUserAuth checks HTTP Basic credentials for RequireUserAuth
+// routes against the local user store. bcrypt.CompareHashAndPassword costs
+// roughly 60-100ms of CPU per call at bcrypt.DefaultCost, and runs on every
+// request here (including the failure path, via dummyPasswordHash, to avoid
+// a timing side-channel) — so routes using this policy have a hard
+// concurrency ceiling of about GOMAXPROCS / bcrypt-latency requests in
+// flight. That's an intentional security/performance tradeoff, not a bug;
+// see BenchmarkAuthorizePolicyUserAuth for the measured cost.
 func (g *Gateway) authorizePolicyUserAuth(policy *compiledPolicy, username, password string) bool {
 	user, err := g.store.GetUserByUsername(strings.TrimSpace(username))
 	if err != nil {

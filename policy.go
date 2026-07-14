@@ -90,11 +90,7 @@ func compilePolicy(policy Policy) (*compiledPolicy, error) {
 	compiled.ipBlockList = blockList
 
 	if policy.RateLimitRequests > 0 && policy.RateLimitWindowSeconds > 0 {
-		compiled.rateLimiter = &rateLimiter{
-			limit:   policy.RateLimitRequests,
-			window:  time.Duration(policy.RateLimitWindowSeconds) * time.Second,
-			entries: map[string]*rateLimiterEntry{},
-		}
+		compiled.rateLimiter = newRateLimiter(policy.RateLimitRequests, time.Duration(policy.RateLimitWindowSeconds)*time.Second)
 	}
 
 	if policy.CacheTTLSeconds > 0 {

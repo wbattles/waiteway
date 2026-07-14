@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
 	status      INTEGER NOT NULL,
 	route       TEXT NOT NULL DEFAULT '',
 	remote_addr TEXT NOT NULL DEFAULT '',
-	duration_ns INTEGER NOT NULL DEFAULT 0
+	duration_ns INTEGER NOT NULL DEFAULT 0,
+	request_id  TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -124,7 +125,43 @@ func openStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
+	// CREATE TABLE IF NOT EXISTS above only applies to fresh databases;
+	// columns added to an existing table need an explicit migration.
+	if err := ensureColumn(db, "request_logs", "request_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate request_logs.request_id: %w", err)
+	}
+
 	return &Store{db: db}, nil
+}
+
+// ensureColumn adds column to table if it isn't already present. SQLite has
+// no "ADD COLUMN IF NOT EXISTS", so this checks PRAGMA table_info first.
+func ensureColumn(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+	return err
 }
 
 func (s *Store) Close() error {
@@ -390,14 +427,14 @@ func (s *Store) AddLogs(entries []requestLog) error {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare("INSERT INTO request_logs (time, method, path, status, route, remote_addr, duration_ns) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	stmt, err := tx.Prepare("INSERT INTO request_logs (time, method, path, status, route, remote_addr, duration_ns, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, entry := range entries {
-		if _, err := stmt.Exec(entry.Time.Format(time.RFC3339Nano), entry.Method, entry.Path, entry.Status, entry.Route, entry.RemoteAddr, int64(entry.Duration)); err != nil {
+		if _, err := stmt.Exec(entry.Time.Format(time.RFC3339Nano), entry.Method, entry.Path, entry.Status, entry.Route, entry.RemoteAddr, int64(entry.Duration), entry.RequestID); err != nil {
 			return err
 		}
 	}
@@ -405,7 +442,7 @@ func (s *Store) AddLogs(entries []requestLog) error {
 }
 
 func (s *Store) ListLogs(limit int) ([]requestLog, error) {
-	rows, err := s.db.Query("SELECT time, method, path, status, route, remote_addr, duration_ns FROM request_logs ORDER BY id DESC LIMIT ?", limit)
+	rows, err := s.db.Query("SELECT time, method, path, status, route, remote_addr, duration_ns, request_id FROM request_logs ORDER BY id DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +453,7 @@ func (s *Store) ListLogs(limit int) ([]requestLog, error) {
 		var entry requestLog
 		var timeStr string
 		var durationNS int64
-		if err := rows.Scan(&timeStr, &entry.Method, &entry.Path, &entry.Status, &entry.Route, &entry.RemoteAddr, &durationNS); err != nil {
+		if err := rows.Scan(&timeStr, &entry.Method, &entry.Path, &entry.Status, &entry.Route, &entry.RemoteAddr, &durationNS, &entry.RequestID); err != nil {
 			return nil, err
 		}
 		entry.Time, _ = time.Parse(time.RFC3339Nano, timeStr)
