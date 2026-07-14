@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,7 +71,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
 	status      INTEGER NOT NULL,
 	route       TEXT NOT NULL DEFAULT '',
 	remote_addr TEXT NOT NULL DEFAULT '',
-	duration_ns INTEGER NOT NULL DEFAULT 0
+	duration_ns INTEGER NOT NULL DEFAULT 0,
+	request_id  TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -123,7 +125,39 @@ func openStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
+	if err := ensureColumn(db, "request_logs", "request_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate request_logs.request_id: %w", err)
+	}
+
 	return &Store{db: db}, nil
+}
+
+func ensureColumn(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+	return err
 }
 
 func (s *Store) Close() error {
@@ -152,7 +186,9 @@ func (s *Store) LoadConfig() (Config, error) {
 	}
 
 	if v := s.GetSetting("log_limit", "100"); v != "" {
-		fmt.Sscanf(v, "%d", &config.LogLimit)
+		if parsed, err := strconv.Atoi(v); err == nil {
+			config.LogLimit = parsed
+		}
 	}
 
 	routes, err := s.ListRoutes()
@@ -297,7 +333,9 @@ func (s *Store) AddRoute(r Route) error {
 	}
 
 	var maxPos int
-	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM routes").Scan(&maxPos)
+	if err := tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM routes").Scan(&maxPos); err != nil {
+		return err
+	}
 
 	if _, err := tx.Exec(
 		"INSERT INTO routes (name, path_prefix, target, policy_name, strip_prefix, websockets, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -356,7 +394,9 @@ func (s *Store) DeleteRoute(index int) error {
 	}
 
 	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count)
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count); err != nil {
+		return err
+	}
 	if count <= 1 {
 		return fmt.Errorf("config needs at least one route")
 	}
@@ -383,14 +423,14 @@ func (s *Store) AddLogs(entries []requestLog) error {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare("INSERT INTO request_logs (time, method, path, status, route, remote_addr, duration_ns) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	stmt, err := tx.Prepare("INSERT INTO request_logs (time, method, path, status, route, remote_addr, duration_ns, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, entry := range entries {
-		if _, err := stmt.Exec(entry.Time.Format(time.RFC3339Nano), entry.Method, entry.Path, entry.Status, entry.Route, entry.RemoteAddr, int64(entry.Duration)); err != nil {
+		if _, err := stmt.Exec(entry.Time.Format(time.RFC3339Nano), entry.Method, entry.Path, entry.Status, entry.Route, entry.RemoteAddr, int64(entry.Duration), entry.RequestID); err != nil {
 			return err
 		}
 	}
@@ -398,7 +438,7 @@ func (s *Store) AddLogs(entries []requestLog) error {
 }
 
 func (s *Store) ListLogs(limit int) ([]requestLog, error) {
-	rows, err := s.db.Query("SELECT time, method, path, status, route, remote_addr, duration_ns FROM request_logs ORDER BY id DESC LIMIT ?", limit)
+	rows, err := s.db.Query("SELECT time, method, path, status, route, remote_addr, duration_ns, request_id FROM request_logs ORDER BY id DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +449,7 @@ func (s *Store) ListLogs(limit int) ([]requestLog, error) {
 		var entry requestLog
 		var timeStr string
 		var durationNS int64
-		if err := rows.Scan(&timeStr, &entry.Method, &entry.Path, &entry.Status, &entry.Route, &entry.RemoteAddr, &durationNS); err != nil {
+		if err := rows.Scan(&timeStr, &entry.Method, &entry.Path, &entry.Status, &entry.Route, &entry.RemoteAddr, &durationNS, &entry.RequestID); err != nil {
 			return nil, err
 		}
 		entry.Time, _ = time.Parse(time.RFC3339Nano, timeStr)
@@ -440,10 +480,12 @@ func (s *Store) DeleteSession(id string) error {
 	return err
 }
 
-func (s *Store) HasRoutes() bool {
+func (s *Store) HasRoutes() (bool, error) {
 	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count)
-	return count > 0
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // --- policies ---
@@ -570,7 +612,9 @@ func (s *Store) AddPolicy(policy Policy) error {
 	}
 
 	var maxPos int
-	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM policies").Scan(&maxPos)
+	if err := tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM policies").Scan(&maxPos); err != nil {
+		return err
+	}
 
 	_, err = tx.Exec(
 		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
@@ -694,7 +738,9 @@ func (s *Store) DeletePolicy(index int) error {
 	}
 
 	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM routes WHERE policy_name = ?", name).Scan(&count)
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM routes WHERE policy_name = ?", name).Scan(&count); err != nil {
+		return err
+	}
 	if count > 0 {
 		return fmt.Errorf("policy is attached to %d route(s)", count)
 	}

@@ -157,7 +157,12 @@ func (g *Gateway) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 	user, err := g.store.GetUserByUsername(username)
-	if err != nil || !checkPassword(password, user.PasswordHash) {
+	if err != nil {
+		checkPassword(password, dummyPasswordHash)
+		g.renderLogin(w, "login failed")
+		return
+	}
+	if !checkPassword(password, user.PasswordHash) {
 		g.renderLogin(w, "login failed")
 		return
 	}

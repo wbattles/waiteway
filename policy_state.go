@@ -4,15 +4,24 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 )
 
+const rateLimiterShardCount = 16
+
+const rateLimiterMaxEntriesPerShard = 1024
+
 type rateLimiter struct {
+	limit  int
+	window time.Duration
+	shards [rateLimiterShardCount]rateLimiterShard
+}
+
+type rateLimiterShard struct {
 	mu      sync.Mutex
-	limit   int
-	window  time.Duration
-	entries map[string]*rateLimiterEntry
+	entries map[netip.Addr]*rateLimiterEntry
 	calls   int
 }
 
@@ -21,30 +30,54 @@ type rateLimiterEntry struct {
 	windowStart time.Time
 }
 
-// rateLimiterSweepEvery controls how often Allow sweeps expired keys out of
-// the entries map. Amortizes cleanup cost so the hot path stays O(1).
 const rateLimiterSweepEvery = 256
 
-func (r *rateLimiter) Allow(key string, now time.Time) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	r := &rateLimiter{limit: limit, window: window}
+	for i := range r.shards {
+		r.shards[i].entries = map[netip.Addr]*rateLimiterEntry{}
+	}
+	return r
+}
 
-	r.calls++
-	if r.calls >= rateLimiterSweepEvery {
-		r.calls = 0
-		for k, entry := range r.entries {
+func rateLimiterShardIndex(key netip.Addr) int {
+	b := key.As16()
+	var h uint64 = 1469598103934665603
+	for _, c := range b {
+		h ^= uint64(c)
+		h *= 1099511628211
+	}
+	return int(h % rateLimiterShardCount)
+}
+
+func (r *rateLimiter) Allow(key netip.Addr, now time.Time) bool {
+	shard := &r.shards[rateLimiterShardIndex(key)]
+
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	shard.calls++
+	if shard.calls >= rateLimiterSweepEvery {
+		shard.calls = 0
+		for k, entry := range shard.entries {
 			if k == key {
 				continue
 			}
 			if now.Sub(entry.windowStart) >= r.window {
-				delete(r.entries, k)
+				delete(shard.entries, k)
 			}
 		}
 	}
 
-	entry := r.entries[key]
+	entry := shard.entries[key]
 	if entry == nil {
-		r.entries[key] = &rateLimiterEntry{count: 1, windowStart: now}
+		if len(shard.entries) >= rateLimiterMaxEntriesPerShard {
+			for k := range shard.entries {
+				delete(shard.entries, k)
+				break
+			}
+		}
+		shard.entries[key] = &rateLimiterEntry{count: 1, windowStart: now}
 		return true
 	}
 
@@ -185,6 +218,13 @@ const responseCacheSweepEvery = 64
 // memory without bound inside the TTL window.
 const maxResponseCacheEntries = 1024
 
+// responseCacheEvictSampleSize bounds how many entries Set inspects when the
+// cache is full and needs to evict. Go randomizes map iteration order, so
+// checking a handful of entries finds an already-expired one with good
+// probability at O(1) cost — scanning the whole map for the "best" victim on
+// every full Set is the cost this exists to avoid.
+const responseCacheEvictSampleSize = 8
+
 func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
 	c.mu.RLock()
 	entry, ok := c.entries[key]
@@ -208,19 +248,22 @@ func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
 func (c *responseCache) Set(key string, status int, header http.Header, body []byte, now time.Time) {
 	c.mu.Lock()
 	if _, exists := c.entries[key]; !exists && len(c.entries) >= maxResponseCacheEntries {
+		victim := ""
+		checked := 0
 		for k, entry := range c.entries {
-			if now.After(entry.expiresAt) {
-				delete(c.entries, k)
+			if victim == "" {
+				victim = k
 			}
-		}
-		// Fallback: if the cache is still full after dropping expired entries, evict one arbitrary entry.
-		// Upgrade to LRU if cache hit rates ever matter enough to measure.
-		if len(c.entries) >= maxResponseCacheEntries {
-			for k := range c.entries {
-				delete(c.entries, k)
+			if now.After(entry.expiresAt) {
+				victim = k
+				break
+			}
+			checked++
+			if checked >= responseCacheEvictSampleSize {
 				break
 			}
 		}
+		delete(c.entries, victim)
 	}
 	c.entries[key] = cachedResponse{
 		status:    status,

@@ -230,6 +230,54 @@ func BenchmarkProxyWithPolicy(b *testing.B) {
 	}
 }
 
+func BenchmarkAuthorizePolicyUserAuth(b *testing.B) {
+	silenceStdout(b)
+
+	store, err := openStore(":memory:")
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { store.Close() })
+
+	if _, err := store.CreateUser("bench-user", "bench-pass", false); err != nil {
+		b.Fatal(err)
+	}
+
+	upstream := upstreamForBench(b)
+	gw, err := newGateway(store, Config{
+		Policies: []Policy{
+			{Name: "userauth", RequireUserAuth: true},
+		},
+		Routes: []Route{
+			{Name: "bench", PathPrefix: "/api/bench", Target: upstream.URL, PolicyName: "userauth"},
+		},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(gw.Close)
+
+	srv := httptest.NewServer(gw.gatewayHandler())
+	b.Cleanup(srv.Close)
+	url := srv.URL + "/api/bench/path"
+
+	client := benchClient(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		req.SetBasicAuth("bench-user", "bench-pass")
+		resp, err := client.Do(req)
+		if err != nil {
+			b.Fatal(err)
+		}
+		drainResponse(b, resp)
+	}
+}
+
 // BenchmarkProxyCacheHit measures the fast path when responses are served
 // directly from the in-memory cache and never reach the upstream.
 func BenchmarkProxyCacheHit(b *testing.B) {
