@@ -9,13 +9,8 @@ import (
 	"time"
 )
 
-// rateLimiterShardCount splits client state across independent locks so
-// concurrent requests from different clients don't serialize on one mutex.
 const rateLimiterShardCount = 16
 
-// rateLimiterMaxEntriesPerShard bounds memory per shard so a flood of
-// unique client addresses can't grow the map without limit; mirrors the cap
-// responseCache applies to its own entries.
 const rateLimiterMaxEntriesPerShard = 1024
 
 type rateLimiter struct {
@@ -35,8 +30,6 @@ type rateLimiterEntry struct {
 	windowStart time.Time
 }
 
-// rateLimiterSweepEvery controls how often Allow sweeps expired keys out of
-// a shard's entries map. Amortizes cleanup cost so the hot path stays O(1).
 const rateLimiterSweepEvery = 256
 
 func newRateLimiter(limit int, window time.Duration) *rateLimiter {
@@ -47,9 +40,6 @@ func newRateLimiter(limit int, window time.Duration) *rateLimiter {
 	return r
 }
 
-// rateLimiterShardIndex hashes the address bytes with FNV-1a. It only needs
-// to spread keys evenly across shards, not resist a determined attacker, so
-// a small non-cryptographic hash is the right tool here.
 func rateLimiterShardIndex(key netip.Addr) int {
 	b := key.As16()
 	var h uint64 = 1469598103934665603
@@ -82,9 +72,6 @@ func (r *rateLimiter) Allow(key netip.Addr, now time.Time) bool {
 	entry := shard.entries[key]
 	if entry == nil {
 		if len(shard.entries) >= rateLimiterMaxEntriesPerShard {
-			// Shard is full and this is a new key. Evict one arbitrary
-			// entry in O(1) rather than scanning for the oldest; the sweep
-			// above already reclaims expired entries on a regular cadence.
 			for k := range shard.entries {
 				delete(shard.entries, k)
 				break
@@ -254,11 +241,6 @@ func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
 func (c *responseCache) Set(key string, status int, header http.Header, body []byte, now time.Time) {
 	c.mu.Lock()
 	if _, exists := c.entries[key]; !exists && len(c.entries) >= maxResponseCacheEntries {
-		// Evict one arbitrary entry in O(1) instead of scanning the whole
-		// map for expired ones on every Set once the cache is full; the
-		// periodic sweep below already reclaims expired entries on a
-		// regular cadence. Upgrade to LRU if cache hit rates ever matter
-		// enough to measure.
 		for k := range c.entries {
 			delete(c.entries, k)
 			break

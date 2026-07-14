@@ -230,10 +230,6 @@ func BenchmarkProxyWithPolicy(b *testing.B) {
 	}
 }
 
-// BenchmarkAuthorizePolicyUserAuth measures the request-rate ceiling for
-// RequireUserAuth routes, which is dominated by bcrypt.CompareHashAndPassword
-// cost (see the doc comment on authorizePolicyUserAuth). Compare against
-// BenchmarkProxyWithPolicy to see how much of the per-request cost is bcrypt.
 func BenchmarkAuthorizePolicyUserAuth(b *testing.B) {
 	silenceStdout(b)
 

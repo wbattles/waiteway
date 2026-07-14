@@ -151,16 +151,10 @@ func (g *Gateway) gatewayHandler() http.Handler {
 	return mux
 }
 
-// requestIDHeader carries a per-request correlation ID both to the upstream
-// (so waiteway's logs can be matched against the upstream's) and back to the
-// client (so a support request can name the exact request it's about).
 const requestIDHeader = "X-Waiteway-Request-Id"
 
 var requestIDCounter atomic.Uint64
 
-// requestIDPrefix is a per-process random value set once at startup. Combined
-// with the monotonic counter below it makes newRequestID cheap enough for
-// the hot path: no per-request syscall or lock, just an atomic increment.
 var requestIDPrefix = newRequestIDPrefix()
 
 func newRequestIDPrefix() string {
@@ -428,8 +422,6 @@ func (g *Gateway) logRequest(entry requestLog) {
 
 const hexDigits = "0123456789abcdef"
 
-// appendJSONString appends a JSON-quoted s to buf without allocating,
-// keeping the whole log line built out of the pooled buffer above.
 func appendJSONString(buf []byte, s string) []byte {
 	buf = append(buf, '"')
 	start := 0

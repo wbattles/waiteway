@@ -24,10 +24,6 @@ func checkPassword(password, hash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-// dummyPasswordHash has no matching plaintext. Callers compare against it
-// when a username lookup fails so a login attempt for a nonexistent user
-// still pays the bcrypt cost, keeping failed-login timing independent of
-// whether the username exists.
 var dummyPasswordHash = mustHashPassword("waiteway-timing-safety-placeholder")
 
 func mustHashPassword(password string) string {

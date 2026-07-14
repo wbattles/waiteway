@@ -125,8 +125,6 @@ func openStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
-	// CREATE TABLE IF NOT EXISTS above only applies to fresh databases;
-	// columns added to an existing table need an explicit migration.
 	if err := ensureColumn(db, "request_logs", "request_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate request_logs.request_id: %w", err)
@@ -135,8 +133,6 @@ func openStore(dbPath string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// ensureColumn adds column to table if it isn't already present. SQLite has
-// no "ADD COLUMN IF NOT EXISTS", so this checks PRAGMA table_info first.
 func ensureColumn(db *sql.DB, table, column, definition string) error {
 	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
