@@ -218,6 +218,13 @@ const responseCacheSweepEvery = 64
 // memory without bound inside the TTL window.
 const maxResponseCacheEntries = 1024
 
+// responseCacheEvictSampleSize bounds how many entries Set inspects when the
+// cache is full and needs to evict. Go randomizes map iteration order, so
+// checking a handful of entries finds an already-expired one with good
+// probability at O(1) cost — scanning the whole map for the "best" victim on
+// every full Set is the cost this exists to avoid.
+const responseCacheEvictSampleSize = 8
+
 func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
 	c.mu.RLock()
 	entry, ok := c.entries[key]
@@ -241,10 +248,22 @@ func (c *responseCache) Get(key string, now time.Time) (cachedResponse, bool) {
 func (c *responseCache) Set(key string, status int, header http.Header, body []byte, now time.Time) {
 	c.mu.Lock()
 	if _, exists := c.entries[key]; !exists && len(c.entries) >= maxResponseCacheEntries {
-		for k := range c.entries {
-			delete(c.entries, k)
-			break
+		victim := ""
+		checked := 0
+		for k, entry := range c.entries {
+			if victim == "" {
+				victim = k
+			}
+			if now.After(entry.expiresAt) {
+				victim = k
+				break
+			}
+			checked++
+			if checked >= responseCacheEvictSampleSize {
+				break
+			}
 		}
+		delete(c.entries, victim)
 	}
 	c.entries[key] = cachedResponse{
 		status:    status,
