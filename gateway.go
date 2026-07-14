@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -389,12 +388,38 @@ func (g *Gateway) logRequest(entry requestLog) {
 	logBufferPool.Put(bufPtr)
 }
 
+const hexDigits = "0123456789abcdef"
+
+// appendJSONString appends a JSON-quoted s to buf without allocating,
+// keeping the whole log line built out of the pooled buffer above.
 func appendJSONString(buf []byte, s string) []byte {
-	encoded, err := json.Marshal(s)
-	if err != nil {
-		return append(buf, '"', '"')
+	buf = append(buf, '"')
+	start := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 0x20 && c != '"' && c != '\\' {
+			continue
+		}
+		buf = append(buf, s[start:i]...)
+		switch c {
+		case '"':
+			buf = append(buf, '\\', '"')
+		case '\\':
+			buf = append(buf, '\\', '\\')
+		case '\n':
+			buf = append(buf, '\\', 'n')
+		case '\r':
+			buf = append(buf, '\\', 'r')
+		case '\t':
+			buf = append(buf, '\\', 't')
+		default:
+			buf = append(buf, '\\', 'u', '0', '0', hexDigits[c>>4], hexDigits[c&0xf])
+		}
+		start = i + 1
 	}
-	return append(buf, encoded...)
+	buf = append(buf, s[start:]...)
+	buf = append(buf, '"')
+	return buf
 }
 
 // purgeSessionsLoop periodically removes expired sessions so the check does

@@ -141,7 +141,7 @@ func newSingleHostProxy(target *url.URL, route Route, policy *compiledPolicy) (*
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		if err != nil && err.Error() == "response too large" {
+		if errors.Is(err, errResponseTooLarge) {
 			http.Error(w, "response too large", http.StatusBadGateway)
 			return
 		}

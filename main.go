@@ -62,12 +62,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if !store.HasRoutes() {
-		store.AddRoute(Route{
+	hasRoutes, err := store.HasRoutes()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !hasRoutes {
+		if err := store.AddRoute(Route{
 			Name:       "example",
 			PathPrefix: "/api/example",
 			Target:     "http://localhost:3000",
-		})
+		}); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	if err := store.EnsureFirstAdmin(os.Getenv("WAITEWAY_ADMIN_USERNAME"), os.Getenv("WAITEWAY_ADMIN_PASSWORD")); err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,10 +79,11 @@ func (g *Gateway) authorizePolicy(route compiledRoute, r *http.Request, hasAPIKe
 
 func (g *Gateway) authorizePolicyUserAuth(policy *compiledPolicy, username, password string) bool {
 	user, err := g.store.GetUserByUsername(strings.TrimSpace(username))
-	if err != nil || !checkPassword(password, user.PasswordHash) {
+	if err != nil {
+		checkPassword(password, dummyPasswordHash)
 		return false
 	}
-	return true
+	return checkPassword(password, user.PasswordHash)
 }
 
 func (g *Gateway) cachedPolicyResponse(route compiledRoute, key string, now time.Time) (cachedResponse, bool) {
@@ -108,6 +110,7 @@ func applyRequestHeaders(policy *compiledPolicy, r *http.Request) {
 }
 
 var errPayloadTooLarge = fmt.Errorf("payload too large")
+var errResponseTooLarge = errors.New("response too large")
 
 const defaultRequestBodyProcessLimit = int64(10 << 20)
 
@@ -203,7 +206,7 @@ func applyResponsePolicy(policy *compiledPolicy, resp *http.Response) error {
 	}
 	_ = resp.Body.Close()
 	if policy.MaxResponseBytes > 0 && int64(len(body)) > policy.MaxResponseBytes {
-		return fmt.Errorf("response too large")
+		return errResponseTooLarge
 	}
 	if policy.ResponseTransformFind != "" {
 		body = bytes.ReplaceAll(body, []byte(policy.ResponseTransformFind), []byte(policy.ResponseTransformReplace))

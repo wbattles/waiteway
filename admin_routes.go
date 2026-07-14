@@ -74,7 +74,9 @@ func (g *Gateway) handleAdminDeleteRoute(w http.ResponseWriter, r *http.Request)
 }
 
 func routeFromForm(r *http.Request) (Route, error) {
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		return Route{}, err
+	}
 	route := Route{
 		Name:        strings.TrimSpace(r.FormValue("route_name")),
 		PathPrefix:  normalizePathPrefix(strings.TrimSpace(r.FormValue("route_path_prefix"))),

@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -152,7 +153,9 @@ func (s *Store) LoadConfig() (Config, error) {
 	}
 
 	if v := s.GetSetting("log_limit", "100"); v != "" {
-		fmt.Sscanf(v, "%d", &config.LogLimit)
+		if parsed, err := strconv.Atoi(v); err == nil {
+			config.LogLimit = parsed
+		}
 	}
 
 	routes, err := s.ListRoutes()
@@ -297,7 +300,9 @@ func (s *Store) AddRoute(r Route) error {
 	}
 
 	var maxPos int
-	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM routes").Scan(&maxPos)
+	if err := tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM routes").Scan(&maxPos); err != nil {
+		return err
+	}
 
 	if _, err := tx.Exec(
 		"INSERT INTO routes (name, path_prefix, target, policy_name, strip_prefix, websockets, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -356,7 +361,9 @@ func (s *Store) DeleteRoute(index int) error {
 	}
 
 	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count)
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count); err != nil {
+		return err
+	}
 	if count <= 1 {
 		return fmt.Errorf("config needs at least one route")
 	}
@@ -440,10 +447,12 @@ func (s *Store) DeleteSession(id string) error {
 	return err
 }
 
-func (s *Store) HasRoutes() bool {
+func (s *Store) HasRoutes() (bool, error) {
 	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count)
-	return count > 0
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM routes").Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // --- policies ---
@@ -570,7 +579,9 @@ func (s *Store) AddPolicy(policy Policy) error {
 	}
 
 	var maxPos int
-	tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM policies").Scan(&maxPos)
+	if err := tx.QueryRow("SELECT COALESCE(MAX(position), 0) FROM policies").Scan(&maxPos); err != nil {
+		return err
+	}
 
 	_, err = tx.Exec(
 		`INSERT INTO policies (name, request_timeout_seconds, retry_count, require_api_key, require_user_auth, rate_limit_requests, rate_limit_window_seconds, allowed_methods, rewrite_path_prefix, add_request_headers, remove_request_headers, max_payload_bytes, request_transform_find, request_transform_replace, cache_ttl_seconds, add_response_headers, remove_response_headers, response_transform_find, response_transform_replace, max_response_bytes, cors_allow_origins, cors_allow_methods, cors_allow_headers, ip_allow_list, ip_block_list, circuit_breaker_failures, circuit_breaker_reset_seconds, position)
@@ -694,7 +705,9 @@ func (s *Store) DeletePolicy(index int) error {
 	}
 
 	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM routes WHERE policy_name = ?", name).Scan(&count)
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM routes WHERE policy_name = ?", name).Scan(&count); err != nil {
+		return err
+	}
 	if count > 0 {
 		return fmt.Errorf("policy is attached to %d route(s)", count)
 	}
